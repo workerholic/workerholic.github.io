@@ -1,12 +1,11 @@
 ---
 ---
 
-//
-// IMPORTS
-//
+@charset "utf-8";
 
 @import "reset";
 @import "variables";
+@import "style";
 // Syntax highlighting @import is at the bottom of this file
 
 /**************/
@@ -17,18 +16,18 @@ html {
   font-size: 100%;
 }
 
+ol ol {
+  list-style: square;
+
+  ol {
+    list-style: circle;
+  }
+}
+
 body {
   background: $white;
   font: 18px/1.4 $helveticaNeue;
   color: $darkGray;
-}
-
-#project_title a {
-  color: #000;
-
-  &:hover {
-    text-decoration: none;
-  }
 }
 
 .container {

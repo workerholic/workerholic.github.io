@@ -6,7 +6,7 @@
 name: Workerholic
 
 # Short bio or description (displayed in the header)
-description: 'a background job processor that works'
+description: 'a background job processor'
 
 # URL of your avatar or profile pic (you could use your GitHub profile pic)
 
@@ -59,11 +59,12 @@ kramdown:
 # Set the Sass partials directory, as we're using @imports
 sass:
   style: :compressed # You might prefer to minify using :compressed
+  sass_dir: _sass
 
 # Use the following plug-ins
 plugins:
-  - jekyll-sitemap # Create a sitemap using the official Jekyll sitemap gem
-  - jekyll-feed # Create an Atom feed using the official Jekyll feed gem
+  #- jekyll-sitemap # Create a sitemap using the official Jekyll sitemap gem
+  #- jekyll-feed # Create an Atom feed using the official Jekyll feed gem
 
 # Exclude these files from your production _site
 exclude:

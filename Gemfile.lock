@@ -211,8 +211,6 @@ PLATFORMS
 
 DEPENDENCIES
   github-pages
-  jekyll-feed
-  jekyll-sitemap
   jekyll-theme-slate
 
 BUNDLED WITH
