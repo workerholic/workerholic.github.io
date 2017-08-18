@@ -9,8 +9,6 @@
 #### An Example Scenario
 #### Concurrency
 #### Parallelism
-### Concurrency
-### Parallelism
 ### Scalability
 #### Scaling in the context of our scenario
 #### Workerholic: a scalable BJP
