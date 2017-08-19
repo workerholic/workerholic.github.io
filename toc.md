@@ -368,89 +368,6 @@ end
 
 ![ASP_diagram_2](/images/ASP_diagram_2.png){:width="350"}
 
-### Configurability
-![configurability_CLI](/images/configurability_CLI.png)
-
-### Ease of Use
-#### Default Configuration
-```ruby
-module Workerholic
-  # ...
-
-  def self.workers_count
-    @workers_count || 25
-  end
-
-  # ...
-
-  def self.redis_connections_count
-    @redis_connections_count || (workers_count + 3)
-  end
-
-  # ...
-end
-```
-
-```ruby
-module Workerholic
-  class Starter
-    # ...
-
-    def self.launch
-      fork_processes if options[:processes] && options[:processes] > 1
-
-      Workerholic.manager = Manager.new(auto_balance: options[:auto_balance])
-      Workerholic.manager.start
-    end
-
-    # ...
-  end
-end
-```
-
-#### Rails Integration
-
-
-```ruby
-module Workerholic
-  class Starter
-    # ...
-
-    def self.start
-      apply_options
-      load_app
-      track_memory_usage_and_expire_job_stats
-      launch
-    end
-
-    # ...
-
-    def self.load_app
-      if File.exist?('./config/environment.rb')
-        load_rails
-      elsif options[:require]
-        load_specified_file
-      else
-        display_app_load_info
-      end
-    end
-
-    # ...
-
-    def self.load_rails
-      require File.expand_path('./config/environment.rb')
-
-      require 'workerholic/adapters/active_job_adapter'
-
-      ActiveSupport.run_load_hooks(:before_eager_load, Rails.application)
-      Rails.application.config.eager_load_namespaces.each(&:eager_load!)
-    end
-
-    # ...
-  end
-end
-```
-
 ### Reporting
 ![reporting_web_ui](/images/reporting_web_ui.png)
 
@@ -550,6 +467,89 @@ end
 ![reporting_historical_redis_size](/images/reporting_historical_redis_size.png)
 
 ![reporting_historical_estimations](/images/reporting_historical_estimations.png)
+
+### Configurability
+![configurability_CLI](/images/configurability_CLI.png)
+
+### Ease of Use
+#### Default Configuration
+```ruby
+module Workerholic
+  # ...
+
+  def self.workers_count
+    @workers_count || 25
+  end
+
+  # ...
+
+  def self.redis_connections_count
+    @redis_connections_count || (workers_count + 3)
+  end
+
+  # ...
+end
+```
+
+```ruby
+module Workerholic
+  class Starter
+    # ...
+
+    def self.launch
+      fork_processes if options[:processes] && options[:processes] > 1
+
+      Workerholic.manager = Manager.new(auto_balance: options[:auto_balance])
+      Workerholic.manager.start
+    end
+
+    # ...
+  end
+end
+```
+
+#### Rails Integration
+
+
+```ruby
+module Workerholic
+  class Starter
+    # ...
+
+    def self.start
+      apply_options
+      load_app
+      track_memory_usage_and_expire_job_stats
+      launch
+    end
+
+    # ...
+
+    def self.load_app
+      if File.exist?('./config/environment.rb')
+        load_rails
+      elsif options[:require]
+        load_specified_file
+      else
+        display_app_load_info
+      end
+    end
+
+    # ...
+
+    def self.load_rails
+      require File.expand_path('./config/environment.rb')
+
+      require 'workerholic/adapters/active_job_adapter'
+
+      ActiveSupport.run_load_hooks(:before_eager_load, Rails.application)
+      Rails.application.config.eager_load_namespaces.each(&:eager_load!)
+    end
+
+    # ...
+  end
+end
+```
 
 ### Testing
 #### Testing Setup
