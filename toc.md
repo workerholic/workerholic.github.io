@@ -21,6 +21,8 @@ These are features that are not necessary for background job processors, but the
 ## Introducing Workerholic: Overall Architecture
 ![Workerholic Overvall Architecture](/images/workerholic_overall_architecture.png)
 
+Above is a diagram of the overall architecture of our take on a background job processor. On the left is a web application that includes our library, the jobs are defined in there, the jobs are serialized and pushed into Redis into "Job Queues". On the right, Workerholic workers poll from the job queues to see if there are any jobs that need to be done; if there is, then the workers will use the "Job Processor" to do the jobs. Regardless of whether the job is completed successfully or not, we store the job back into Redis as "Stats" that we will show on our web UI (not shown here). If a job did fail, we use "Job Retry" together with the "Job Scheduler" to attempt to retry a job sometime in the future. A future timestamp is placed on the job, it gets pushed into Redis into a sorted set as "Scheduled Jobs", the Job Scheduler will peek the sorted set and compare timestamps to see if there is a job due. If there is then the job will be enqueued into a Job Queue and the cycle continues.
+
 ## Building Workerholic
 ### Reliability
 #### Jobs Persistence
