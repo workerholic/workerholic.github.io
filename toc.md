@@ -349,16 +349,23 @@ Here's we benchmarked how Workerholic performed when we ran 2 processes vs. 1 pr
 ##### Parallelism in Workerholic
 ![parallelism_workeholic_diagram](/images/parallelism_workeholic_diagram.png)
 
-The diagram above shows how Workerholic uses multiple processes if we had the CPU cores available to do so. The OS scheduler schedules the cores to each process, each process has its own worker threads which can poll jobs from Redis and work on them. So if we have four CPU cores we can have computational resources allocated to four different processes potentially at the same time, effectively allowing them to run in parallel, reducing the time ratio from 1:40 to 1:10.
+The diagram above shows how Workerholic uses multiple processes if we had the CPU cores available to do so. The OS scheduler schedules the cores to each process, each process has its own worker threads which can poll jobs from Redis and work on them. So if we have four CPU cores we can have computational resources allocated to four different processes potentially at the same time, effectively allowing them to run in parallel, reducing the enqueuing:processing ratio from 1:40 to 1:10.
 
 ##### Processes and Memory consumption
-We're able
+We're able to create more processes, but surely that comes with a cost like everything else right?
+
 ![efficiency_processes_memory_design](/images/efficiency_processes_memory_design.png)
 
-We can increase efficiency by
+Before we get into that, let's talk a little bit more about processes. Each process has its own address space, stack, and heap. When you fork a process in Ruby, you create a child process which will get its own stack and share the same heap initially. This is called copy-on-write, meaning that the child process will share the same resources with the parent process, until modifications are made to that resource, in which case, that resource will be written into the child's own heap.
 
 ![memory_usage_processes](/images/memory_usage_processes.png)
+
+Here, we benchmarked both having one process and two processes. Having one process takes up 125MB of memory, but having two processes don't take twice as much memory. This is the copy-on-write mechanism at work.
+
+As we mentioned previously, using our four CPU cores, we can fork to a total of four processes and reduce our image processing enqueuing:processing ratio down to 1:10. But that is still not good enough. After an extended period of time, we will eventually end up with a backlog and a huge memory footprint. Where do we go from here?
+
 ### Scalability
+
 #### Scaling in the context of our scenario
 ![scalibility_image](/images/scalibility_image.png){:width="380" height="350"}
 
