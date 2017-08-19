@@ -369,14 +369,28 @@ As we mentioned previously, using our four CPU cores, we can fork to a total of 
 #### Scaling in the context of our scenario
 ![scalibility_image](/images/scalibility_image.png){:width="380" height="350"}
 
+Currently, we are using all of our resources on hand to evenly processing throughput, but with an enqueuing:processing ratio of 1:10. It is still not good enough. At this point, we have to scale our system. We have two options:
+
 ##### Scaling vertically
+We can get more cores on a single machine. If we get 20 cores, we still have a 1:2 enqueuing:processing ratio, so we will need 40 cores. This does not sound very plausible. Have you ever heard of a single machine having this many cores?
+
 ##### Scaling horizontally
+We can instead buy more servers with less cores on each. We can buy 10 servers, each with four cores for a total of 40 cores and that will get the job done. This is way more realistic, as it would be akin to buying more worker dynos on Heroku for example.
+
 #### Workerholic: a scalable BJP
+Now we know that we want to scale horizontally. The question is how?
+
 ![scalibility_workerholic](/images/scalibility_workerholic.png)
 
+Well, that's easy. Workerholic is already scalable because we use Redis as a central data store for your jobs. Workerholic will still need access to the source code of your application, but Workerholic is not tied to a specific instance of your application, so you can have distributed web servers or a single web server and Workerholic will still work just fine. Workerholic can do this because its workers only care about the queue they're polling from, which is centralized with Redis.
+
 ### Optimizations
+Once we had a fairly featured solution, we decided to compare against Sidekiq.
+
 #### Serialization
 ![optimizations_serialization_benchmark_yaml](/images/optimizations_serialization_benchmark_yaml.png)
+
+On our first iteration, we found that there was a great difference between Workerholic and Sidekiq; ours took much longer both on the enqueuing side and the processing side. Why was that? Well looked into Sidekiq and found that it was using JSON serialization while we were using YAML, and so we decided to change up our code to use JSON and see if that was really where the bottleneck was.
 
 ![optimizations_serialization_benchmark_json](/images/optimizations_serialization_benchmark_json.png)
 
