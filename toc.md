@@ -205,6 +205,8 @@ And as you can see from the results here: for non-blocking and CPU-blocking jobs
 ##### Concurrency in Workerholic
 ![efficiency_concurrency_workerholic](/images/efficiency_concurrency_workerholic.png){:width="700"}
 
+In the context of Workerholic, we introduced concurrency in order to improve performance by having our workers poll and perform the jobs from within a thread. This way, as shown earlier, if jobs are IO bound we can make use of concurrency in order to maximize the dequeuing and processing throughput and bring that enqueueing:processing ratio down.
+
 ```ruby
 module Workerholic
   class Worker
@@ -227,10 +229,16 @@ module Workerholic
 end
 ```
 
+We have our workers `poll` Redis. If `poll` returns something, we process that job using `JobProcessor`.
+
 ##### Threads and Memory Consumption
 ![efficiency_concurrency_threads_memory](/images/efficiency_concurrency_threads_memory.png){:width="450"}
 
+Processes have threads, and these threads can spawn more threads. These threads have their independent stacks, but they share a common heap belonging to the process that the threads belong to. For our email-sending job example above, we can spawn as many threads as we'd like to bring down our enqueuing:processing ratio. But what happens to our memory footprint?
+
 ![memory_usage_threads](/images/memory_usage_threads.png){:width="600"}
+
+Not a problem! As you can see in the graph above, having 24 more threads do not increase your memory consumption significantly. That is because threads are cheap, and most of the memory footprint comes from the heap of the process.
 
 ##### Concurrency Issues & Thread-Safety
 ```ruby
