@@ -4,6 +4,19 @@
 ![Example BJP](/images/popular_features_example_2.png){:width="500"}
 
 ## Popular Features of BJPs
+Before we get into building a background job processor, let's first introduce some of the common features we see in other background job processors:
+##### Core Features:
+These are features that all background job processors *should* have.
+* **asynchrony**: background job processors should handle a task in a separate process away from the main application, so that your main web application is free to continue handling more requests from the user.
+* **reliability**: background job processors should be able to handle any errors that occur gracefully.
+* **efficiency:** background job processors should perform their tasks in a timely manner so that queues do not get a backlog of things that still needs to be done.
+* **scalability**: background job processors should run fine and scale in the context of a distributed system, such as multiple web servers.
+
+##### Bonus Features:
+These are features that are not necessary for background job processors, but these can be added for robustness.
+* **configurability**: allows a developer to tweak options that best fits their own application's needs.
+* **ease of use**: simple to use out-of-the-box with rails.
+* **reporting**: track job statistics for information about background jobs for decision making.
 
 ## Introducing Workerholic: Overall Architecture
 ![Workerholic Overvall Architecture](/images/workerholic_overall_architecture.png)
