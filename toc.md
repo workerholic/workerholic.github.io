@@ -37,6 +37,8 @@ In order to make our jobs persistent even through some of those failures, we rel
 #### Retrying Failed Jobs & Job Scheduler
 ![Retry Failed Jobs Diagram](/images/job_retry.png)
 
+Jobs can also fail for numerous reasons that may or may not be in the developer's control such as temporary network issues, timeouts, invalid job, etc. Regardless of the reason, Workerholic will attempt to retry a job. The way we set up job retrying is to schedule it for some time in the future, effectively turning a failed job into a scheduled job. Here is a little bit of code to show you what that looks like:
+
 ```ruby
 module Workerholic
   class JobRetry
@@ -56,6 +58,10 @@ module Workerholic
   end
 end
 ```
+
+Our jobs are simply Ruby objects with an attribute called `retry_count`, as the name suggests, keeps track of how many times a job has been retried. We will retry a job up to five times, if it ends up failing that many times. At that point, it's more likely that there's a problem with the job itself than something wrong with a component that's not in your control. In which case, we log that the job has failed and store that data into our stats and you as the developer can figure out what went wrong.
+
+As we mentioned earlier, we `JobRetry` enlists the help of `JobScheduler` to schedule a time for a failed job to be executed again, effectively turning it into a scheduled job:
 
 ```ruby
 module Workerholic
@@ -90,6 +96,8 @@ module Workerholic
   end
 end
 ```
+
+When Workerholic first boots up, we have a manager that `start`s a new scheduler thread which continuously calls `enqueue_due_jobs`. In `enqueue_due_jobs`, we have a private method that checks if there are any jobs due. If there is, we take a `peek` at our sorted set, deserialize the job, put it in the correct queue, and remove that job from the sorted set.
 
 #### Graceful Shutdown
 ```ruby
