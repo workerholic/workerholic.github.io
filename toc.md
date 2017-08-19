@@ -38,17 +38,30 @@ Above is a diagram of the overall architecture of our BJP, Workerholic.
 - The `Job Scheduler` will peek the sorted set and compare timestamps to see if there is a job due. If there is then the job will be enqueued into a Job Queue and the cycle continues.
 
 ## Building Workerholic
-Let's start diving into the numerous features we wanted in Workerholic!
+
+The core of this project was to build a BJP from scratch and sharing our findings, what we learned and the challenges we faced. Next, we will dive into each feature that we deemed belonged into a BJP and how they are incorporated in Workerholic.
 
 ### Reliability
-A common feature developers want out of background job processors is to be reliable through a number of different reasons. It could be a network issue that prevents email sending, or maybe the job wasn't configured properly, or maybe the background job processor itself crashes. Regardless of the reason, we want to make sure that jobs are aren't just getting lost. Our challenge here is how do we make Workerholic reliable?
+A common feature developers want out of a BJP is to be reliable. When performing a job, a network issue that prevents email sending could occur, or the job could be misconfigured. The main application could crash or the BJP could crash. Regardless of the reason, we want to make sure that jobs are not lost.
+
+How can we make our BJP reliable?
 
 #### Jobs Persistence
+
+As mentioned above, a question that needs to be answered is: how can we make sure our jobs don't get lost if the BJP or the main application crashes?
+To solve this problem we introduced a data store. This data store is used to persist the serialized jobs that have been enqueued by the main application.
+For Workerholic, we decided to use Redis because of its following features:
+- convenient data structures for the problems we needed to solve (lists, sorted sets, hashes)
+- persistence to disk (every 5 minutes by default, configurable)
+- key:value data store, which grants easy access to the data
+- in memory data store, which allows for very efficient reads and writes
+
 ![Jobs Persistence Diagram](/images/jobs_persistence_redis.png)
 
-In order to make our jobs persistent even through some of those failures, we rely on Redis's robustness to make our library more reliable. Redis helps solve the problem of when either the web application crashes or if the background job processor itself crashes, the jobs that are already stored on Redis will be preserved. But what if Redis itself crashes? This is part of why Redis is considered robust because it takes snapshots of your database every five minutes by default. As an added bonus, you can configure Redis to take snapshots more or less as needed.
+By relying on Redis and its robustness we made Workerholic reliable. Redis helps solve the problem of when either the web application crashes or BJP itself crashes, the jobs stored in Redis will be persisted. In case of Redis crashing, we will also have the jobs persisted to disk thanks to the database snapshots taken by Redis.
 
 #### Retrying Failed Jobs & Job Scheduler
+
 ![Retry Failed Jobs Diagram](/images/job_retry.png)
 
 Jobs can also fail for numerous reasons that may or may not be in the developer's control such as temporary network issues, timeouts, invalid job, etc. Regardless of the reason, Workerholic will attempt to retry a job. The way we set up job retrying is to schedule it for some time in the future, effectively turning a failed job into a scheduled job. Here is a little bit of code to show you what that looks like:
