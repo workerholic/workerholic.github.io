@@ -241,6 +241,10 @@ Processes have threads, and these threads can spawn more threads. These threads 
 Not a problem! As you can see in the graph above, having 24 more threads do not increase your memory consumption significantly. That is because threads are cheap, and most of the memory footprint comes from the heap of the process.
 
 ##### Concurrency Issues & Thread-Safety
+While spawning more threads is cheap and significantly increases processing throughput, multi-threading introduces a new concern called *thread-safety*. When code is "thread-safe", it means that the state of the resources behave correctly when multiple threads are using and modifying those resources.
+
+In MRI, core methods are thread-safe, so we don't need to worry about them. However, user-spaced code is not thread-safe, because it may introduce race conditions. Race conditions occur when two or more threads are competing to modify the same resource. This happens because the atomicity of the operation is not guaranteed and the OS scheduler can interrupt the execution of code at any time and schedule another thread. Let's take a look at the `PaymentJob` class:
+
 ```ruby
 $balance = 0
 
@@ -264,10 +268,22 @@ end.each(&:join)
 puts "Final balance: #{$balance}"
 ```
 
+Above we have a global variable `$balance` and a `PaymentJob` class with a instance method `perform` which modifies `$balance`. Then we create 10 threads, and have each of those threads create a new instance of `PaymentJob` and calls `perform` on the instance, each instance trying to increment `$balance` to 1,000,000. At the end, we should end up with 10,000,000, right?
+
+```
     $ ruby concurrency_issues_example.rb
     $ Final balance: 3000000
+    $ ruby concurrency_issues_example.rb
     $ Final balance: 6000000
-    $ Final balance: 7000000
+    $ ruby concurrency_issues_example.rb
+    $ Final balance: 5000000
+
+```
+
+As you can see here, that is definitely not the case. Why?
+
+Because the code above is not thread-safe. As mentioned earlier, when we have multiple threads trying to access and modify the same resource, `$balance` in this case, we have a race condition. A thread can enter the `perform` method which first sets `current_balance = $balance`, and then the OS scheduler can pause that thread and run another thread to do the same thing. So now you have two threads (and potentially more) starting its `current_balance` from 0 rather than a stacking multiple of 1,000,000. In the end, your final balance can be any multiple of 1,000,000 between 1,000,000 and 10,000,000. In other words, you cannot guarantee that the code will work as expected, and results may be different each time you run this program. So how do we prevent this?
+
 
 ```ruby
 $balance = 0
@@ -285,20 +301,30 @@ end
 
 10.times.map do
   Thread.new do
-    100_000.times { PaymentJob.new.perform }
+    1_000_000.times { PaymentJob.new.perform }
   end
 end.each(&:join)
 
 puts "Final balance: #{$balance}"
 ```
 
+```
     $ ruby concurrency_issues_example.rb
     $ Final balance: 10000000
+    $ ruby concurrency_issues_example.rb
     $ Final balance: 10000000
+    $ ruby concurrency_issues_example.rb
     $ Final balance: 10000000
 
+```
+
+{Insert text here later}
+
 #### Parallelism
+Concurrency alone is good enough for IO-blocking jobs, but as you saw in a previous chart, it does nothing for CPU bound blocking jobs. So what do we do?
+
 ##### Image Processing Jobs Calculations
+
 ##### Parallelism & Processes
 ![efficiency_parallelism_processes](/images/efficiency_parallelism_processes.png){:width="300"}
 
