@@ -3,12 +3,26 @@
 
 @import "{{ site.theme }}";
 
-ol ol {
-  list-style: lower-alpha;
+.inner
+
+ol {
+  list-style: upper-roman;
 
   ol {
-    list-style: lower-roman;
+    list-style: decimal;
+
+    ol {
+      list-style: lower-alpha;
+
+      ol {
+        list-style: lower-roman;
+      }
+    }
   }
+}
+
+.inner {
+  max-width: 900px;
 }
 
 pre {
