@@ -100,6 +100,8 @@ end
 When Workerholic first boots up, we have a manager that `start`s a new scheduler thread which continuously calls `enqueue_due_jobs`. In `enqueue_due_jobs`, we have a private method that checks if there are any jobs due. If there is, we take a `peek` at our sorted set, deserialize the job, put it in the correct queue, and remove that job from the sorted set.
 
 #### Graceful Shutdown
+So now that we have solved the issue of what to do in terms of application failure or job failures, we also want to handle what happens if you decide to shut down our Workerholic manually. We of course want to handle that gracefully to prevent future complications from occurring when you start up Workerholic again.
+
 ```ruby
 module Workerholic
   class Manager
@@ -135,6 +137,9 @@ module Workerholic
   end
 end
 ```
+
+When Workerholic does detect some kind of interruption, we call `shutdown` where we kill our workers and other internal components. We have not discussed threads yet, but for those of you who are familiar with threads, keep in mind that our `kill` methods here are not the same as `Thread.kill`:
+
 ```ruby
 module Workerholic
   class Worker
@@ -148,6 +153,8 @@ module Workerholic
   end
 end
 ```
+
+Our internal `kill` method simply sets the `alive` instance variable from `true` to `false`. Afterwards, we join each of our worker threads with the main thread. This way, we ensure that the workers can have a chance to finish their final jobs before actually shutting down.
 
 ### Efficiency
 
