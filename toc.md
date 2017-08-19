@@ -22,12 +22,12 @@ These are features that all background job processors *should* have.
 * **reliability**: background job processors should be able to handle any errors that occur gracefully.
 * **efficiency:** background job processors should perform their tasks in a timely manner so that queues do not get a backlog of things that still needs to be done.
 * **scalability**: background job processors should run fine and scale in the context of a distributed system, such as multiple web servers.
+* **reporting**: background job processors should track job statistics for information about background jobs, allowing for useful decision making.
 
 ##### Bonus Features:
 These are features that are not necessary for background job processors, but these can be added for robustness.
 * **configurability**: allows a developer to tweak options that best fits their own application's needs.
 * **ease of use**: simple to use out-of-the-box with rails.
-* **reporting**: track job statistics for information about background jobs for decision making.
 
 ## Introducing Workerholic: Overall Architecture
 ![Workerholic Overvall Architecture](/images/workerholic_overall_architecture.png)
@@ -525,7 +525,11 @@ end
 Once an average is calculated, Workerholic divides each of its queue sizes by the average, get a workers count, and assign that many extra workers to their respective queues.
 
 ### Reporting
+Let's move on to reports. It is an important feature because it allows a developer to gain insight into the state of overall jobs, the job types, jobs that failed, and how many jobs are completed over time, which the developer can use to make optimized decisions.
+
 ![reporting_web_ui](/images/reporting_web_ui.png)
+
+Above is what our web UI looks like. This tracks real-time data, polling every 10 seconds.
 
 #### Real-time Statistics
 ##### What data?
@@ -534,6 +538,8 @@ Once an average is calculated, Workerholic divides each of its queue sizes by th
 ![reporting_realtime_memory](/images/reporting_realtime_memory.png)
 
 ![reporting_real_time_queues](/images/reporting_real_time_queues.png)
+
+We decided to have Workerholic show our users aggregate data for finished jobs, queued jobs, scheduled jobs, failed jobs, current number of queues, and the memory footprint over time, as well as the breakdown of jobs from each class. All this data is updated every 10 seconds, using AJAX on the front-end to query our internal API for the data.
 
 ##### How to store the data?
 ```ruby
@@ -554,9 +560,13 @@ module Workerholic
 end
 ```
 
+Now we have what data we wanted to track and store. Next we needed to ask how we should store our data? We decided to use Redis because there's no need for a new dependency, very efficient writes and reads (in-memory store), automatic persistence to disk, and have the tools available to store serialized jobs, like using a sorted set.
+
 ##### How much data?
+once we had a foundation for live data, we should think about how much data we should store. Initially, we decided we do not need to store live data, and to just poll new data every 10 seconds. This posed a problem though once we introduced graphs into the web UI; just polling for new data and throwing away stale data was no longer an option. A quick-fix for this was to just store data on the front-end for a certain number of data points to create the graph. This worked, but only if the user stayed on the page. If the user navigated away from the page. The data would've been lost. Instead, we looked at Redis to store this data, up to 1000 seconds, for a total of 100 data points. Currently, our graphs only show up to 240 seconds, so this many data points is unnecessary, but it may become necessary if we decided to cover more time with our graphs.
 
 #### Historical Statistics
+Live data, check! Next, we want to display historical, and first we had to think about what type of data to store?
 ##### What data?
 ![reporting_historical_charts](/images/reporting_historical_charts.png)
 
