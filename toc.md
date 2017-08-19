@@ -184,11 +184,23 @@ To begin braeking down our example scenario, let's make the assumption that it w
 We pushed 100,000 jobs into our main queue. We found that on average, each serialized job in Workerholic takes up 26 bytes in Redis (`serializedlength` / 100,000). After a week, we'd have a backlog of 48M jobs that still needs to be processed which is equivalent to 1.18GB of memory stored. So the challenge for us here is how do we even out enqueuing throughput and processing throughput? We should not slow down the enqueuing throughput or else your web application will face the similar unresponsive issues again waiting for the jobs to enqueue before moving on, so let's focus on increasing the processing throughput.
 
 ##### Concurrency & Threads
+So we found that because our jobs would backlog to 120h in a span of 24h, that gives us a 1:5 enqueuing:processing ratio, meaning that we need 5 workers working concurrently in order to enqueue and process on a 1:1 ratio.
+
 ![efficiency_OS_scheduler_threads](/images/efficiency_OS_scheduler_threads.png){:width="400"}
+
+Threads in general are controlled by your OS schedule and invokes context switching to switch between threads.
 
 ![efficiency_mri_gil](/images/efficiency_mri_gil.png){:width="450" height="200"}
 
+In MRI (Matz Ruby Interpreter, aka CRuby, the main Ruby implementation that we are all used to), threads enable concurrency but do not execute in parallel. This is because of the global interpreter lock (GIL) that currently exists in MRI, which means only a single thread can be running at any given time. Each thread can be scheduled to receive some CPU time by the OS scheduler, but thanks to the GIL, a Ruby process running in MRI cannot receive computational resources from more than one core.
+
+Concurrency and parallelism are often mixed up, as it did for us. Let us offer an example to hopefully clarify that if these two concepts are still fuzzy: say that you are a single developer working on two projects, A and B. You can only work on a single project at any given time. Maybe you're working on project A now, and you want to work on project B after project A is 20% complete. You can do that, but you can never focus on both project A and B at the same time. It would take you A + B time to complete both projects. That is *concurrency* - you are working concurrently to complete both projects. Now let's say there are two developers, you and a colleague; you work on project A while your colleague works on project B, you can swap projects anytime in the middle or both complete your respective projects. This would take you (A + B) / 2 time. That is *parallelism* - you and your colleague are working in parallel to complete both projects.
+
+With that said, going back to the limitations of MRI only being able to run concurrently, it does not seem like it would make much of a difference to use more threads, if only one thread can run at a time. However, because email sending is considered an IO-blocking job, a job where you have idle time, the OS scheduler can schedule another thread to be active while the current active thread is idly waiting for a response. The point here is if a job has 99% of its execution time sitting idly, more threads will help reduce the total execution time than if you were to only have a single thread working sequentially. That's because even if a thread is not active, the idle time is still being "worked on".
+
 ![benchmark_workers_count](/images/benchmark_workers_count.png)
+
+And as you can see from the results here: for non-blocking and CPU-blocking jobs, having threads don't help the situation. In fact, it makes it worse due to the overhead incurred from switching between threads. But if you look at the IO-blocking jobs: with one worker, it would've taken very long, 5034 seconds in fact and way off the chart; the y-axis has been capped to give you a better representation of the rest of the data. With 25 workers, the tasks perform almost 25x as fast. At 100 workers, it's almost 4 times as fast as 25 workers.
 
 ##### Concurrency in Workerholic
 ![efficiency_concurrency_workerholic](/images/efficiency_concurrency_workerholic.png){:width="700"}
