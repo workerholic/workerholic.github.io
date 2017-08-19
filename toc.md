@@ -1,7 +1,18 @@
 ## Introduction
+We are three software engineers..... Yup..
+
+Workerholic is an open source background job processor. Workerholic is a play on the word "workaholic". We built this because we have popular and mature solutions out there like Sidekiq which is widely used, which is great. Libraries are great, but it abstracts the lower level details like threads and processes, concurrency and parallelism, the details that we often take for granted. Even we use libraries a lot, and we thought this would be a good chance to dig deeper and share with you all, give back to the community, what abstractions we learned.
+
+### Why use a background job processor?
+So, why do we want to use a background job processor? Well, it's because sometimes, certain methods or tasks can take a long time. We're talking about anywhere from a few hundred milliseconds to sometimes several seconds or even minutes or hours. While your application is performing this time-consuming task, your application becomes blocked, unresponsive, and cannot do anything else. From a user standpoint, that's not good.
+
 ![Request-Response](/images/popular_features_example_1.png){:width="400"}
 
+For example, say that you as a user wanted to click a button to send yourself an email with more information about a product you're interested in. This will take a while because this happens over the wire, the web server has to process your request, send out the email, possibly wait for a response from the email service, and then give you back a response from the web server. All during this time, the application won't be able to process anymore requests from you, or otherwise interact with your current page in a responsive manner. This is the classic HTTP request-response cycle, except the request is blocked waiting for a response from the email service, and cannot give you, the client, back a response.
+
 ![Example BJP](/images/popular_features_example_2.png){:width="500"}
+
+This is where background job processors come in. Background job processors run as a separate process decoupled from your application. As a developer of your application, you can delegate these time-consuming tasks to a background job processor to handle these time-consuming tasks while allowing the user to still interact with your website. These tasks are performed asynchronously when you have resources available.
 
 ## Popular Features of BJPs
 Before we get into building a background job processor, let's first introduce some of the common features we see in other background job processors:
@@ -321,20 +332,30 @@ puts "Final balance: #{$balance}"
 {Insert text here later}
 
 #### Parallelism
-Concurrency alone is good enough for IO-blocking jobs, but as you saw in a previous chart, it does nothing for CPU bound blocking jobs. So what do we do?
+Concurrency alone is good enough for IO-blocking jobs, but as you saw in a previous chart, it does nothing for CPU bound blocking jobs. Why? And what do we do?
 
 ##### Image Processing Jobs Calculations
+A common CPU-blocking job is image processing. So now let's say an image processing job takes 4 seconds on average, and recall from earlier, we said that we have a large Rails application with 1000 QPS and 1% of that is image processing, which means we have 864,000 image processing jobs per day, multiply that by 4s and you have 960 hrs worth of processing lined up in a period of 24 hrs, giving us a 1:40 enqueue:processing ratio. Similar to the email example, as the this gets backlogged, we will start to run out of memory. So same challenge: evening out enqueuing and processing throughput, but our previous solution won't work. Why?
 
 ##### Parallelism & Processes
 ![efficiency_parallelism_processes](/images/efficiency_parallelism_processes.png){:width="300"}
 
+As we've said, image processing is CPU-bound, because this type of job requires CPU time only, there is no idle time in which the thread can be put to sleep. This means that having more threads will not help the situation because your CPU core is already working full-time to process this job, and we cannot take advantage of concurrency and multithreading for this type of job in the context of MRI. Since our machine has multiple cores, we can take advantage of this fact by running multiple processes in parallel. When the CPU has multiple cores, the OS scheduler can allocate some computational resources from the different cores to different processes.
+
 ![benchmark_2_processes](/images/benchmark_2_processes.png)
+
+Here's we benchmarked how Workerholic performed when we ran 2 processes vs. 1 process. We can see that having more processes mean increase in performance, but at the cost of more memory. In each of these cases, we can see that the time is around half. However, that is not always guaranteed because of the way your CPU cores are assigned by your operating system.
 
 ##### Parallelism in Workerholic
 ![parallelism_workeholic_diagram](/images/parallelism_workeholic_diagram.png)
 
+The diagram above shows how Workerholic uses multiple processes if we had the CPU cores available to do so. The OS scheduler schedules the cores to each process, each process has its own worker threads which can poll jobs from Redis and work on them. So if we have four CPU cores we can have computational resources allocated to four different processes potentially at the same time, effectively allowing them to run in parallel, reducing the time ratio from 1:40 to 1:10.
+
 ##### Processes and Memory consumption
+We're able
 ![efficiency_processes_memory_design](/images/efficiency_processes_memory_design.png)
+
+We can increase efficiency by
 
 ![memory_usage_processes](/images/memory_usage_processes.png)
 ### Scalability
