@@ -394,10 +394,18 @@ On our first iteration, we found that there was a great difference between Worke
 
 ![optimizations_serialization_benchmark_json](/images/optimizations_serialization_benchmark_json.png)
 
-And voila! Here are the results above. By changing our serialization strategy to JSON, we were able to improve our enqueuing duration by 70% and our processing duration by 55% compared to our YAML iteration. We're now slightly faster than Sidekiq, but that's only because Sidekiq is more robust.
+And voila! Here are the results above. By changing our serialization strategy to JSON, we were able to improve our enqueuing duration by 70% and our processing duration by 55% compared to our YAML iteration. We're now slightly faster than Sidekiq!
 
 #### Using Custom Algorithms
+We have improved our efficiency by changing our serialization strategy. Can we do better? We benchmarked against Sidekiq using 10,000 nonblocking, cpu-blocking, and IO-blocking jobs.
+
 ![efficiency_algorithms_benchmark](/images/efficiency_algorithms_benchmark.png){:width="400"}
+
+With Sidekiq's random polling algorithm, it took 242 seconds. Our turn. We benchmarked with our evenly balancing algorithm with an even number of workers for each queue regardless of job types or queue load, and we stand at 357s. Much worse...
+
+Next, we tried auto-balancing workers based on queue load, but still no assumption on jobs. Slightly better, but still not good enough. We went through a second iteration of auto-balancing where we identified IO-bound queues and CPU-bound queues, where we assign only one worker per CPU-bound queue and auto-balance the rest. As you may recall, having more workers on CPU-blocking jobs makes no difference, which is a waste of Workerholic's resources. With that we rang in at 223s, which is great! We call this algorithm the Adaptive and Successive Provisioning (ASP).
+
+*Note: we want to quickly mention that we did not build Workerholic to compete with Sidekiq, and that you should not prefer our library to theirs' or vice-versa. We just chose Sidekiq to benchmark against because it is the leader of background job processing in Ruby and we thought that is the bar we should aim for. Could we do better? Maybe, maybe not. We haven't tried to yet, because we were satisfied with the current results.*
 
 ##### Evenly balanced workers
 ##### Adaptive and Successive Algorithm (ASP)
@@ -419,6 +427,8 @@ module Workerholic
 end
 ```
 
+When Workerholic starts, so does our `WorkerBalancer`, which will default to evenly balancing workers unless an `auto` option is detected.
+
 ```ruby
 module Workerholic
   class WorkerBalancer
@@ -439,6 +449,8 @@ module Workerholic
   end
 end
 ```
+
+Here, we're showing what happens when Workerholic auto-balances its workers. It will auto-balance every second.
 
 ```ruby
 module Workerholic
@@ -483,6 +495,8 @@ end
 
 ![ASP_diagram_1](/images/ASP_diagram_1.png){:width="350"}
 
+Workerholic will `assign_one_worker_per_queue`, then take the total number of jobs in all the queues, divide that by the number of our remaining workers to get the average number of jobs each remaining worker should be responsible for, and we provision the queues accordingly, only to the IO-bound queues.
+
 ```ruby
 module Workerholic
   class WorkerBalancer
@@ -507,6 +521,8 @@ end
 ```
 
 ![ASP_diagram_2](/images/ASP_diagram_2.png){:width="350"}
+
+Once an average is calculated, Workerholic divides each of its queue sizes by the average, get a workers count, and assign that many extra workers to their respective queues.
 
 ### Reporting
 ![reporting_web_ui](/images/reporting_web_ui.png)
