@@ -1,27 +1,41 @@
 ## Introduction
+Why would you need to use a Background Job Processor (BJP)?
+
+Let's look at a simple example of a user, identified as the `Client`, registering on a web site `awesome-website.com`. When users register on `awesome-website.com` they receive an email in order for them to verify their email address. What does this mean on the Web Server side?
+In the case of `awesome-website.com`, sending an email requires to send an HTTP request to an Email Service Provider (ESP) and wait for a response, depending on the latency of the ESP and the geographical distance between the Web Server and the ESP's server this could take from 2ms to 500ms or more. Let's assume the worst and consider each trip over the wire to the ESP takes 500ms. This means that if the Web Server's usual response time for this kind of HTTP request is 150ms then it will take 650ms total to send a response back to the client.
+
 ![Request-Response](/images/popular_features_example_1.png){:width="400"}
+
+650 ms is not a good response time. How can we do better? Does the user really need to receive a response a be able to interact with the rest of the website only once the email has been correctly sent? The answer is no, which means that we could send the email asynchronously and, in the meantime, let the user interact with the website, maybe even send another HTTP request to view a different page. This is where a **Background Job Processor** comes in. Its sole purpose is to be delegated some jobs/work so it can be performed asynchronously and unburden the web server from *blocking* work.
 
 ![Example BJP](/images/popular_features_example_2.png){:width="500"}
 
-## Popular Features of BJPs
-Before we get into building a background job processor, let's first introduce some of the common features we see in other background job processors:
-##### Core Features:
-These are features that all background job processors *should* have.
-* **asynchrony**: background job processors should handle a task in a separate process away from the main application, so that your main web application is free to continue handling more requests from the user.
-* **reliability**: background job processors should be able to handle any errors that occur gracefully.
-* **efficiency:** background job processors should perform their tasks in a timely manner so that queues do not get a backlog of things that still needs to be done.
-* **scalability**: background job processors should run fine and scale in the context of a distributed system, such as multiple web servers.
+## Background Job Feature Overview
 
-##### Bonus Features:
-These are features that are not necessary for background job processors, but these can be added for robustness.
-* **configurability**: allows a developer to tweak options that best fits their own application's needs.
-* **ease of use**: simple to use out-of-the-box with rails.
-* **reporting**: track job statistics for information about background jobs for decision making.
+Before we get into how to build a Background Job Processor, let's take a quick run at the features a BJP needs to have, based on research done on other popular BJPs:
+
+##### Core Features:
+* **asynchrony**: a BJP should handle a task in a different process than the one used for the main application, so that the main application is free to continue handling more requests
+* **reliability**: a BJP should be able to handle errors gracefully and be resilient in case of crashing
+* **efficiency:** a BJP should perform the jobs that it is handed in a timely manner so that it does not get a constantly increasing backlog of jobs
+* **scalability**: a BJP should run fine and scale in the context of a distributed system
+* **reporting**: a BJP should track statistics about jobs, errors and other information about background jobs for better decision making
+
+##### Additional Features:
+* **configurability**: a BJP should be configurable in order to allow developers to tweak options so that the BJP can best fits their own application's needs
+* **ease of use**: a BJP should be simple to use out-of-the-box and integrate with rails in the context of building it in Ruby
 
 ## Introducing Workerholic: Overall Architecture
+
 ![Workerholic Overvall Architecture](/images/workerholic_overall_architecture.png)
 
-Above is a diagram of the overall architecture of our take on a background job processor. On the left is a web application that includes our library, the jobs are defined in there, the jobs are serialized and pushed into Redis into "Job Queues". On the right, Workerholic workers poll from the job queues to see if there are any jobs that need to be done; if there is, then the workers will use the "Job Processor" to do the jobs. Regardless of whether the job is completed successfully or not, we store the job back into Redis as "Stats" that we will show on our web UI (not shown here). If a job did fail, we use "Job Retry" together with the "Job Scheduler" to attempt to retry a job sometime in the future. A future timestamp is placed on the job, it gets pushed into Redis into a sorted set as "Scheduled Jobs", the Job Scheduler will peek the sorted set and compare timestamps to see if there is a job due. If there is then the job will be enqueued into a Job Queue and the cycle continues.
+Above is a diagram of the overall architecture of our BJP, Workerholic.
+- On the left is a stack of instances of a web application, each including Workerholic. Jobs are defined and enqueued in these web application instances.
+- In order for the jobs to be enqueued, they are first serialized and then stored in Redis into Lists, serving as `Job Queues`.
+- On the right, Workerholic workers poll from the job queues and, if there are any jobs to be done, process the jobs using the `Job Processor` component of Workerholic.
+- Regardless of whether the job is completed successfully or not, we store the job back in Redis inside a data structure serving as `Stats` storage that we will then use to show on our web UI.
+- If a job failed, we use the `Job Retry` component along with the `Job Scheduler` component in order to attempt to retry a job sometime in the future. To do so, a future timestamp is placed on the job, it is then stored into Redis into a `Scheduled Jobs` sorted set (a Redis data structure that we will expand on later in this post).
+- The `Job Scheduler` will peek the sorted set and compare timestamps to see if there is a job due. If there is then the job will be enqueued into a Job Queue and the cycle continues.
 
 ## Building Workerholic
 Let's start diving into the numerous features we wanted in Workerholic!
