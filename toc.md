@@ -157,17 +157,31 @@ end
 Our internal `kill` method simply sets the `alive` instance variable from `true` to `false`. Afterwards, we join each of our worker threads with the main thread. This way, we ensure that the workers can have a chance to finish their final jobs before actually shutting down.
 
 ### Efficiency
+Let's shift gears a little bit and start talking about how Workerholic is efficient.
 
 #### An Example Scenario
 
 ##### Scenario
+Suppose we have a huge Rails application with the follow statistics:
+* 1000 average queries per second (QPS)
+* 10% of those is email sending
+* 1% image processing
+
+Also suppose that we a machine with the follow specs:
+* 4GB RAM
+* 4 CPU cores.
 
 ##### Challenge
+The challenge we have here is how do we maximize the use of available resources?
 
 #### Concurrency
 
 ##### Email Jobs calculations
+To begin braeking down our example scenario, let's make the assumption that it would take an average of 50ms to send an email; this is the time it takes between making the request and getting a response from the email service. If we take a 24 hour window, at 86400 seconds per day and 1000 QPS, we will get 86.4 million requests per day, 10% of which are email which means 8.64 million email sending background jobs. If each takes an average of 50ms, it means that in a span of 24 hours, we have a list of jobs that will take 120 hours to process, which gives us an enqueuing:processing ratio of 1:5. If we left this unchecked and allowed these to be performed synchronously, then over longer periods of time, we will get a backlog of background jobs.
+
 ![serialized_job_length_redis](/images/serialized_job_length_redis.png)
+
+We pushed 100,000 jobs into our main queue. We found that on average, each serialized job in Workerholic takes up 26 bytes in Redis (`serializedlength` / 100,000). After a week, we'd have a backlog of 48M jobs that still needs to be processed which is equivalent to 1.18GB of memory stored. So the challenge for us here is how do we even out enqueuing throughput and processing throughput? We should not slow down the enqueuing throughput or else your web application will face the similar unresponsive issues again waiting for the jobs to enqueue before moving on, so let's focus on increasing the processing throughput.
 
 ##### Concurrency & Threads
 ![efficiency_OS_scheduler_threads](/images/efficiency_OS_scheduler_threads.png){:width="400"}
