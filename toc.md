@@ -567,8 +567,11 @@ once we had a foundation for live data, we should think about how much data we s
 
 #### Historical Statistics
 Live data, check! Next, we want to display historical, and first we had to think about what type of data to store?
+
 ##### What data?
 ![reporting_historical_charts](/images/reporting_historical_charts.png)
+
+Since historical data is looking into the past, for now we decided that we'll just store aggregated data of completed and failed jobs, as well as the breakdown for each class, up to 365 days.
 
 ##### How to store the data?
 ###### First Iteration
@@ -589,6 +592,8 @@ module Workerholic
   end
 end
 ```
+
+In our first iteration, we used a sorted set using the beginning of the day as a timestamp to use as scores, which would be very easy to retrieve from Redis - using a range of scores to display data for 7 or 30 days for example. However, we ran into concurrency issues because we have three ways to update aggregated data: getting the count, removing the count, and incrementing the count.
 
 ###### Second Iteration
 ```ruby
@@ -619,7 +624,11 @@ module Workerholic
 end
 ```
 
+In our second iteration, we decided to use a hash instead. Same as before, using the beginning of the day timestamps as hash fields, and this way we push the computation logic down to the Redis level when we retrieve our data. Redis also has a very nice convenient hash method for incrementing fields.
+
 ##### How much data?
+Once we have figured out how we wanted to store the data, we need to think about how many data points to store? The goal for us here is to be able to store data for up to a year.
+
 ```ruby
 require 'redis'
 
@@ -632,7 +641,11 @@ end
 
 ![reporting_historical_redis_size](/images/reporting_historical_redis_size.png)
 
+ We set 10,000 and 100,000 hash fields in Redis to get an average of how much memory each field would take, which comes to an average of 8 bytes. We went through iterations of how much memory each would take:
+
 ![reporting_historical_estimations](/images/reporting_historical_estimations.png)
+
+We make an assumption that there would be 25 different job classes, and from there if we took one data point a day, that would give us 9000 fields which translates to 0.1MB, once an hour for 219,000 fields which translate to 1.7MB, and once per minute for 13M fields which translates to 100MB. From this, we realized that once/day is the only viable solution to be able transfer information over the wire quickly.
 
 ### Configurability
 ![configurability_CLI](/images/configurability_CLI.png)
