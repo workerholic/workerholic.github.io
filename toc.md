@@ -648,9 +648,15 @@ end
 We make an assumption that there would be 25 different job classes, and from there if we took one data point a day, that would give us 9000 fields which translates to 0.1MB, once an hour for 219,000 fields which translate to 1.7MB, and once per minute for 13M fields which translates to 100MB. From this, we realized that once/day is the only viable solution to be able transfer information over the wire quickly.
 
 ### Configurability
+Moving on to our first bonus feature: configurability. We wanted Workerholic to be versatile and satisfy the needs of the developer. Background job processors are powerful in what they accomplish. But all applications are different. Some may have a million jobs per day, while some maybe only have 10. In which case, we want our background job processor to have the option for the developer to change what they want to best suit their application's needs.
+
 ![configurability_CLI](/images/configurability_CLI.png)
 
+The configurability options we included are auto-balancing workers, an option to set the number of workers based on your application's needs, an option to load your application by supplying a path, an option to specify the number of processes you want to spin up, and the number of connections in the Redis connection pool. All those options are packaged up into a simple and intuitive API. And like all other command-line tools you've experienced, we have the `--help` flag to show you how to use these options.
+
 ### Ease of Use
+Next bonus feature: ease of use. We wanted to make Workerholic easy to use and work right our of the box, as well as make it friendly with the popular frameworks in the Ruby ecosystem like Rails.
+
 #### Default Configuration
 ```ruby
 module Workerholic
@@ -670,6 +676,8 @@ module Workerholic
 end
 ```
 
+To make it work out of the box, Workerholic has default options set up already so you don't need to supply any of the options we mentioned previously. Our default is 25 workers, and the default number of Redis connections is the number of workers + 3, in this case, 28. This is the three additional connections we need for the job scheduler, worker balancer, and the memory trackers.
+
 ```ruby
 module Workerholic
   class Starter
@@ -687,8 +695,10 @@ module Workerholic
 end
 ```
 
-#### Rails Integration
+Workerholic also has a default for 1 process and evenly balancing workers. If `options[:processes]` is defined, we fork processes. Otherwise, we just start the manager for one process.
 
+#### Rails Integration
+A library built for web applications written in Ruby would be quite useless, or at best very unpopular, if it did not work with Rails.
 
 ```ruby
 module Workerholic
@@ -729,6 +739,8 @@ module Workerholic
   end
 end
 ```
+
+When workerholic starts, it'll load the app which load rails if it detects a specific file in Rails, and then we require our own active job adapter and load that in along with the rest of the rails application.
 
 ### Testing
 #### Testing Setup
