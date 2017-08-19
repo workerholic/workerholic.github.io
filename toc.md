@@ -390,9 +390,11 @@ Once we had a fairly featured solution, we decided to compare against Sidekiq.
 #### Serialization
 ![optimizations_serialization_benchmark_yaml](/images/optimizations_serialization_benchmark_yaml.png)
 
-On our first iteration, we found that there was a great difference between Workerholic and Sidekiq; ours took much longer both on the enqueuing side and the processing side. Why was that? Well looked into Sidekiq and found that it was using JSON serialization while we were using YAML, and so we decided to change up our code to use JSON and see if that was really where the bottleneck was.
+On our first iteration, we found that there was a great difference between Workerholic and Sidekiq; ours took much longer both on the enqueuing side and the processing side. Why was that? We looked into Sidekiq and found that it was using JSON serialization while we were using YAML, and so we decided to change our code to use JSON and see if that was really where the bottleneck was.
 
 ![optimizations_serialization_benchmark_json](/images/optimizations_serialization_benchmark_json.png)
+
+And voila! Here are the results above. By changing our serialization strategy to JSON, we were able to improve our enqueuing duration by 70% and our processing duration by 55% compared to our YAML iteration. We're now slightly faster than Sidekiq, but that's only because Sidekiq is more robust.
 
 #### Using Custom Algorithms
 ![efficiency_algorithms_benchmark](/images/efficiency_algorithms_benchmark.png){:width="400"}
