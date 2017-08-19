@@ -743,6 +743,8 @@ end
 When workerholic starts, it'll load the app which load rails if it detects a specific file in Rails, and then we require our own active job adapter and load that in along with the rest of the rails application.
 
 ### Testing
+As we developed our features, we needed to tests for our code.
+
 #### Testing Setup
 ```ruby
 module Workerholic
@@ -753,7 +755,6 @@ module Workerholic
   # ...
 end
 ```
-
 ```ruby
 # spec/spec_helper.rb
 
@@ -768,7 +769,10 @@ RSpec.configure do |config|
 end
 ```
 
+To set up, we set up redis with a different port if the environment is testing, to separate it from our development environment. And also, we wanted to flush redis after each run to ensure that it is a valid state for every spec.
+
 #### Testing and Threads
+What we found along the way is testing threaded code is not trivial. We spent quite some time trying to figure this out, and this is because having multiple threads means that there is naturally asynchronously execution, meaning that we cannot expect the results immediately. Additionally, there is potential dependency on other threaded components.
 ```ruby
 # spec/worker_spec.rb
 
@@ -802,11 +806,18 @@ def expect_during(duration_in_secs, target)
 end
 ```
 
+In order to get around the asynchronous nature of threads, instead of asserting the final state of the system, we expect a certain state of the system to be mutated within a specified timeframe.
+
 ### Benchmarking Workerholic
 #### Workerholic compared to the Gold Standard: Sidekiq
 ![benchmark_workerholic_sidekiq](/images/benchmark_workerholic_sidekiq.png)
 
+Finally, we wanted to compare with Sidekiq one last time with each types of jobs individually. We're on par with Sidekiq, and only slightly faster than Sidekiq each time, and as we mentioned before this is because Sidekiq is a more mature and robust solution with many more features and handles more use cases.
+
 #### JRuby
 ![benchmark_jruby](/images/benchmark_jruby.png)
 
+We also decided to compare the results of jRuby vs MRI. Because jRuby can run in parallel without the need of spinning up multiple processes, we found that CPU blocking jobs were much faster in jRuby than in MRI, which is what we would expect.
+
 ## Conclusion
+N/A.
