@@ -61,6 +61,8 @@ For Workerholic, we decided to use Redis because of its following features:
 
 By relying on Redis and its robustness we made Workerholic reliable. Redis helps solve the problem of when either the web application crashes or BJP itself crashes, the jobs stored in Redis will be persisted. In case of Redis crashing, we will also have the jobs persisted to disk thanks to the database snapshots taken by Redis.
 
+This solves the problem of the main application crashing or the BJP crashing. What should be done if the jobs themselves crash/raise an exception?
+
 #### Retrying Failed Jobs & Job Scheduler
 
 Jobs can fail for numerous reasons that may or may not be in the developer's control such as temporary network issues, timeouts, invalid job, etc. Regardless of the reason, the BJP needs to handle these errors. In case the error being raised while the job is being performed is a momentary error, then it might be a good idea to have a way to retry this job later in the future.
@@ -129,8 +131,11 @@ end
 
 When Workerholic first boots up, its `Manager` component is in charge of starting a new `JobScheduler` thread which continuously calls `enqueue_due_jobs`, every two seconds. In `enqueue_due_jobs`, a call to a private method `job_due?` checks if there are any jobs due. If there is, `JobScheduler` takes a `peek` at the scheduled jobs sorted set, deserializes the job, puts it in the correct queue, and removes that job from the sorted set.
 
+With this feature, if a job fails it will be retried, following a specific retry logic. But there is still a scenario during which jobs could be lost. What should be done if the BJP is stopped while some jobs were being executed?
+
 #### Graceful Shutdown
-So now that we have solved the issue of what to do in terms of application failure or job failures, we also want to handle what happens if you decide to shut down our Workerholic manually. We of course want to handle that gracefully to prevent future complications from occurring when you start up Workerholic again.
+
+When shutting down the BJP some jobs might still be executing and not yet done. These jobs would no longer be stored in Redis and would, consequently, be lost upon Workerholic shutting down. The way Workerholic handles this specific reliability issue is by performing a **graceful shutdown**:
 
 ```ruby
 module Workerholic
@@ -168,7 +173,7 @@ module Workerholic
 end
 ```
 
-When Workerholic does detect some kind of interruption, we call `shutdown` where we kill our workers and other internal components. We have not discussed threads yet, but for those of you who are familiar with threads, keep in mind that our `kill` methods here are not the same as `Thread.kill`:
+When Workerholic detects an `Interrupt` or a `SystemExit`, it calls `shutdown`, which in turns kills its workers and other internal components. The way a worker is killed is by turning its `alive` status to `false`:
 
 ```ruby
 module Workerholic
@@ -184,7 +189,7 @@ module Workerholic
 end
 ```
 
-Our internal `kill` method simply sets the `alive` instance variable from `true` to `false`. Afterwards, we join each of our worker threads with the main thread. This way, we ensure that the workers can have a chance to finish their final jobs before actually shutting down.
+This will allow the worker to finish executing its current job. Afterwards, we `join` each of our worker with our main thread of execution. We will touch on why this is important in a later section, for now it is only useful to know that the workers will be waited on before Workerholic exits.
 
 ### Efficiency
 Let's shift gears a little bit and start talking about how Workerholic is efficient.
