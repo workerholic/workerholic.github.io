@@ -18,11 +18,11 @@ Before we get into how to build a Background Job Processor, let's take a quick r
 * **asynchrony**: a BJP should handle a task in a different process than the one used for the main application, so that the main application is free to continue handling more requests
 * **reliability**: a BJP should be able to handle errors gracefully and be resilient in case of a crash
 * **efficiency:** a BJP should perform the jobs that it is handed in a timely manner so that it does not get a constantly increasing backlog of jobs
-* **scalability**: a BJP should run fine and scale in the context of a distributed system
-* **reporting**: a BJP should track statistics about jobs, errors and other information about background jobs for better decision making
+* **scalability**: a BJP should scale in the context of a distributed system
+* **reporting**: a BJP should track statistics about jobs, errors and other related information for better decision making
 
 ##### Additional Features:
-* **configurability**: a BJP should be configurable in order to allow developers to tweak options so that the BJP can best fits their own application's needs
+* **configurability**: a BJP should be configurable in order to allow developers to tweak options so that the BJP can best fit their own application's requirements
 * **ease of use**: a BJP should be simple to use out-of-the-box and integrate with rails in the context of building it in Ruby
 
 
@@ -32,19 +32,19 @@ Before we get into how to build a Background Job Processor, let's take a quick r
 
 Above is a diagram of the overall architecture of our BJP, Workerholic.
 - On the left is a stack of instances of a web application, each including Workerholic. Jobs are defined and enqueued in these web application instances.
-- In order for the jobs to be enqueued, they are first serialized and then stored in Redis into Lists, serving as `Job Queues`.
+- In order for the jobs to be enqueued, they are first serialized and then stored in Redis, by being pushed inside Redis' List data structure, serving as `Job Queues`.
 - On the right, Workerholic workers poll from the job queues and, if there are any jobs to be done, process the jobs using the `Job Processor` component of Workerholic.
-- Regardless of whether the job is completed successfully or not, we store the job back in Redis inside a data structure serving as `Stats` storage that we will then use to show on our web UI.
-- If a job failed, we use the `Job Retry` component along with the `Job Scheduler` component in order to attempt to retry a job sometime in the future. To do so, a future timestamp is placed on the job, it is then stored into Redis into a `Scheduled Jobs` sorted set (a Redis data structure that we will expand on later in this post).
-- The `Job Scheduler` will peek the sorted set and compare timestamps to see if there is a job due. If there is then the job will be enqueued into a Job Queue and the cycle continues.
+- Regardless of whether the job is completed successfully or not, we store the job back in Redis inside a data structure serving as `Stats` storage. We will then use to this statistical information to display background jobs related metrics on our web UI.
+- If a job failed, we use the `Job Retry` component along with the `Job Scheduler` component in order to attempt to retry a job sometime in the future. To do so, a future timestamp is placed on the job, it is then stored into Redis inside a `Scheduled Jobs` sorted set (a Redis data structure that we will expand on later in this post).
+- The `Job Scheduler` will peek the sorted set and compare timestamps to see if there is a job due. If that's the case, the job will be enqueued into a Job Queue and the cycle continues.
 
 ## Building Workerholic
 
-The core of this project was to build a BJP from scratch and sharing our findings, what we learned and the challenges we faced. Next, we will dive into each feature that we deemed belonged into a BJP and how they are incorporated in Workerholic.
+The idea behind this project was to build a BJP from scratch and sharing our findings, what we learned and the challenges we faced. Next, we will dive into each feature that we deemed belonged into a BJP and how they are implemented in Workerholic.
 
 ### Reliability
 
-A common feature developers want out of a BJP is to be reliable. When performing a job, a network issue that prevents email sending could occur, or the job could be misconfigured. The main application could crash or the BJP could crash. Regardless of the reason, we want to make sure that jobs are not lost.
+A common feature developers want out of a BJP is to be reliable. When performing a job, a network issue that prevents email sending could occur, or the job could be misconfigured. The main application and/or the BJP could crash. Regardless of the reason, we want to make sure that jobs are not lost.
 
 How can we make our BJP reliable?
 
@@ -60,9 +60,9 @@ For Workerholic, we decided to use Redis because of its following features:
 
 ![Jobs Persistence Diagram](/images/jobs_persistence_redis.png)
 
-By relying on Redis and its robustness we made Workerholic reliable. Redis helps solve the problem of when either the web application crashes or BJP itself crashes, the jobs stored in Redis will be persisted. In case of Redis crashing, we will also have the jobs persisted to disk thanks to the database snapshots taken by Redis.
+By relying on Redis and its robustness we made Workerholic reliable. Redis helps solve the problem of when either the web application or BJP itself crashes, the jobs stored in Redis will be persisted. Redis automatically takes database snapshots, which means in case it crashes, we will also have the jobs persisted to disk.
 
-This solves the problem of the main application crashing or the BJP crashing. What should be done if the jobs themselves crash/raise an exception?
+This solves the problem of the main application's or BJP's unexpected shutdown/crash. What should be done if the jobs themselves crash/raise an exception?
 
 #### Retrying Failed Jobs & Job Scheduler
 
@@ -70,7 +70,7 @@ Jobs can fail for numerous reasons that may or may not be in the developer's con
 
 ![Retry Failed Jobs Diagram](/images/job_retry.png)
 
-Workerholic will attempt to retry failed jobs. The way we set up job retrying is to schedule it for some time in the future, effectively turning a failed job into a scheduled job. Here is the implementation of Workerholic's `retry` functionality:
+Workerholic will attempt to retry intermittently failing jobs. The way we set up job retrying is by scheduling the job to be performed at some time in the future, effectively turning a failed job into a scheduled job. Here is the implementation of Workerholic's `retry` functionality:
 
 ```ruby
 module Workerholic
@@ -92,9 +92,9 @@ module Workerholic
 end
 ```
 
-Jobs are wrapped with Ruby objects which have an attribute called `retry_count`. As the name suggests, it is used to keep track of how many times a job has been retried. A job will be retried up to five times. At that point, it's more likely that there's a problem with the job itself rather than something wrong with an external component. In which case, Workerholic will log that the job has failed and store statistics data into Redis so that Workerholic's users can figure out what went wrong.
+Jobs are wrapped with Ruby objects which have an attribute called `retry_count`. As the name suggests, it is used to keep track of how many times a job has been retried. A job will be retried up to five times. At that point, it's more likely that there's a problem with the job itself rather than something being wrong with an external component. In which case, Workerholic will log that the job has failed and store statistics data into Redis so that Workerholic's users can figure out what went wrong.
 
-The code snippet above also shows that `JobRetry` enlists the help of `JobScheduler` to schedule a time for a failed job to be executed again, effectively turning it into a scheduled job. Here is how `JobScheduler` schedules jobs and enqueues jobs ready to be executed:
+The code snippet above also shows that `JobRetry` enlists the help of `JobScheduler` to schedule a time for a failed job to be executed at, effectively turning it into a scheduled job. Here is how `JobScheduler` schedules jobs and enqueues jobs ready to be executed:
 
 ```ruby
 module Workerholic
@@ -132,11 +132,11 @@ end
 
 When Workerholic first boots up, its `Manager` component is in charge of starting a new `JobScheduler` thread which continuously calls `enqueue_due_jobs`, every two seconds. In `enqueue_due_jobs`, a call to a private method `job_due?` checks if there are any jobs due. If there is, `JobScheduler` takes a `peek` at the scheduled jobs sorted set, deserializes the job, puts it in the correct queue, and removes that job from the sorted set.
 
-With this feature, if a job fails it will be retried, following a specific retry logic. But there is still a scenario during which jobs could be lost. What should be done if the BJP is stopped while some jobs were being executed?
+With this feature, if a job fails it will be retried, following a specific retry logic. But there is still a scenario in which jobs could be lost. What should be done if the BJP is stopped while some jobs were being executed?
 
 #### Graceful Shutdown
 
-When shutting down the BJP some jobs might still be executing and not yet done. These jobs would no longer be stored in Redis and would, consequently, be lost upon Workerholic shutting down. The way Workerholic handles this specific reliability issue is by performing a **graceful shutdown**:
+When shutting down the BJP some jobs might still be executing and not yet completed. These jobs would no longer be stored in Redis and would, consequently, be lost upon Workerholic shutting down. The way Workerholic handles this specific reliability issue is by performing a **graceful shutdown**:
 
 ```ruby
 module Workerholic
@@ -194,18 +194,18 @@ This will allow the worker to finish executing its current job. Afterwards, we `
 
 ### Efficiency
 
-Efficiency is another core feature for a BJP. Why does a BJP need to be efficient? How can we build an efficient? Those are the questions that we will answer in the following sections.
+Efficiency is another core feature for a BJP. Why does a BJP need to be efficient? How can make it efficient? Those are the questions that we will answer in the following sections.
 
 #### An Example Scenario
 
 ##### Scenario
 
-Suppose we have a significantly big Rails application with the following statistics:
+Suppose we have a significantly big Rails application with the following constraints:
 * 1000 average queries per second (QPS)
-* 10% of these queries involve some email sending
-* 1% of these queries involve some image processing
+* 10% of these queries involve sending email
+* 1% of these queries involve image processing
 
-Also suppose we have a machine with the following specs:
+Let's also assume we have a machine with the following specs:
 * 4GB RAM
 * 4 CPU cores
 
@@ -217,10 +217,10 @@ How can we build a BJP that will maximize the use of available hardware resource
 
 ##### Email Jobs calculations
 
-First of all we need to do a bit of calculations in order to understand the problem we are facing with the current scenario we have:
-- Let's assume it would take an average of **50ms** for a trip over the wire (sending a request and receiving a response) to the Email Service Provider of the Rails application in our scenario.
+First of all, we need to do a bit of calculations in order to understand the problem we face in this particular scenario:
+- Let's assume it would take an average of **50ms** for a trip over the wire (sending a request and receiving a response) to the Email Service Provider of the Rails application.
 - For a **24 hour window**, at 86,400 seconds per day and **1000 QPS**, we will get **86.4 million requests per day**.
-- **10%** of these requests involve sending an email. This means sending **8.64 million email** for a 24 hour window.
+- **10%** of these requests involve sending an email. This means sending **8.64 million emails** in a 24 hour window.
 - If sending an email takes an average of 50ms, it means that in a span of 24 hours, we have a list of jobs that will take **120 hours to process**, which gives us an enqueuing:processing ratio of **1:5**. In other words, in 24 hours time there can only be `8.64M / 5 = 1.73M` out of 8.64M jobs that can be performed.
 
 This insight raises two issues:
@@ -233,7 +233,7 @@ This insight raises two issues:
 
 An additional backlog of 96 hours of email sending jobs everyday, along with an additional 1.17GB of memory occupied by this same backlog of email sending jobs every week make for a very inefficient background job system.
 
-So, here the challenge for us here is to even the enqueuing throughput and the dequeuing throughput. how do we even out enqueuing throughput and processing throughput? We should not slow down the enqueuing throughput or else your web application will face the similar unresponsive issues again waiting for the jobs to enqueue before moving on, so let's focus on increasing the processing throughput.
+The challenge for us here is to even the enqueuing throughput and the dequeuing throughput. We should not slow down the enqueuing side or else our web application will become unresponsive, waiting for jobs to be enqueued before moving on, so let's focus on increasing the processing throughput.
 
 ##### Concurrency & Threads
 
