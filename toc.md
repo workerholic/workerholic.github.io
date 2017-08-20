@@ -6,7 +6,7 @@ In the case of `awesome-website.com`, sending an email requires to send an HTTP 
 
 ![Request-Response](/images/popular_features_example_1.png){:width="400"}
 
-650 ms is not a good response time. How can we do better? Does the user really need to receive a response a be able to interact with the rest of the website only once the email has been correctly sent? The answer is no, which means that we could send the email asynchronously and, in the meantime, let the user interact with the website, maybe even send another HTTP request to view a different page. This is where a **Background Job Processor** comes in. Its sole purpose is to be delegated some jobs/work so it can be performed asynchronously and unburden the web server from *blocking* work.
+650 ms could be considered a slow response time, but it is not unacceptable. What happens if the ESP sees its latency increase by a 5 seconds because of a network error or a an unexpected spike in traffic? The client would have to wait 5,650ms in order to receive a response. How can we do better? Does the user really need to receive a response a be able to interact with the rest of the website only once the email has been correctly sent? The answer is no, which means that we could send the email asynchronously and, in the meantime, let the user interact with the website, maybe even send another HTTP request to view a different page. This is where a **Background Job Processor** comes in. Its sole purpose is to be delegated some jobs/work so it can be performed asynchronously and unburden the web server from *blocking* work.
 
 ![Example BJP](/images/popular_features_example_2.png){:width="500"}
 
@@ -16,7 +16,7 @@ Before we get into how to build a Background Job Processor, let's take a quick r
 
 ##### Core Features:
 * **asynchrony**: a BJP should handle a task in a different process than the one used for the main application, so that the main application is free to continue handling more requests
-* **reliability**: a BJP should be able to handle errors gracefully and be resilient in case of crashing
+* **reliability**: a BJP should be able to handle errors gracefully and be resilient in case of a crash
 * **efficiency:** a BJP should perform the jobs that it is handed in a timely manner so that it does not get a constantly increasing backlog of jobs
 * **scalability**: a BJP should run fine and scale in the context of a distributed system
 * **reporting**: a BJP should track statistics about jobs, errors and other information about background jobs for better decision making
@@ -236,23 +236,38 @@ An additional backlog of 96 hours of email sending jobs everyday, along with an 
 So, here the challenge for us here is to even the enqueuing throughput and the dequeuing throughput. how do we even out enqueuing throughput and processing throughput? We should not slow down the enqueuing throughput or else your web application will face the similar unresponsive issues again waiting for the jobs to enqueue before moving on, so let's focus on increasing the processing throughput.
 
 ##### Concurrency & Threads
-So we found that because our jobs would backlog to 120h in a span of 24h, that gives us a 1:5 enqueuing:processing ratio, meaning that we need 5 workers working concurrently in order to enqueue and process on a 1:1 ratio.
+
+Based on our scenario, we need to maximize the job processing through put by a factor of 5. How can we increase the job processing throughput when it comes to a BJP?
+
+Currently, we have one worker processing the jobs one by one, sequentially. Our goal is to process 5 these jobs 5 times as fast, this means we could have 5 workers instead of 1 working together in order to process 5 jobs, instead of one, in 50 ms. This is where the concept of **Concurrency** comes in.
+Concurrency is employed to design atomic units of work than can be executed at the same time, concurrently. This means that for a time window, two or more units of works are worked on, it could be at the exact same time (in parallel) or alternatively but never at the exact same time (not in parallel). In our case, units of works would be the jobs that need to be processed.
+
+In Ruby we can enable **Concurrency** by using **Threads**. A Ruby program always has a main thread of execution in which the usual code is executed. It is possible for this main thread to use the `Thread` API, provided by the Ruby core library, in order to spawn new threads of execution. A thread of execution executes independently from other threads of execution.
+
+Threads rely on what is called the **OS scheduler** in order to receive some computational resources from a CPU core. This is how they are able to execute the code they contain. The OS Scheduler is in charge of fairly attributing some computational resources to each thread and process by scheduling CPU cores to work on each on of them for a specific duration.
 
 ![efficiency_OS_scheduler_threads](/images/efficiency_OS_scheduler_threads.png){:width="400"}
 
-Threads in general are controlled by your OS schedule and invokes context switching to switch between threads.
+In MRI (Matz Ruby Interpreter, aka CRuby, the main Ruby implementation that we are all used to), threads enable concurrency but do not execute in parallel. This is because of the Global Interpreter Lock (GIL). Each thread can be scheduled to receive some CPU time by the OS scheduler but with the limitation of having the executing MRI process not being able to receive computational resources from more than 1 CPU core at a time.
 
 ![efficiency_mri_gil](/images/efficiency_mri_gil.png){:width="450" height="200"}
 
-In MRI (Matz Ruby Interpreter, aka CRuby, the main Ruby implementation that we are all used to), threads enable concurrency but do not execute in parallel. This is because of the global interpreter lock (GIL) that currently exists in MRI, which means only a single thread can be running at any given time. Each thread can be scheduled to receive some CPU time by the OS scheduler, but thanks to the GIL, a Ruby process running in MRI cannot receive computational resources from more than one core.
+With this limitation it does not seem to make a difference to add threads. We will just be executing jobs concurrently but it will take the same amount of time. The OS scheduler will allocate the computational resources from a single CPU core between the Threads sequentially, by invoking Conext Switching, but not in parallel.
 
-Concurrency and parallelism are often mixed up, as it did for us. Let us offer an example to hopefully clarify that if these two concepts are still fuzzy: say that you are a single developer working on two projects, A and B. You can only work on a single project at any given time. Maybe you're working on project A now, and you want to work on project B after project A is 20% complete. You can do that, but you can never focus on both project A and B at the same time. It would take you A + B time to complete both projects. That is *concurrency* - you are working concurrently to complete both projects. Now let's say there are two developers, you and a colleague; you work on project A while your colleague works on project B, you can swap projects anytime in the middle or both complete your respective projects. This would take you (A + B) / 2 time. That is *parallelism* - you and your colleague are working in parallel to complete both projects.
+Our jobs are IO bound because they require a trip over the wire: sending a request to the Email Service Provider API and receiving a response once the email has been sent. This trip over the wire takes 50 ms on average. Having an IO bound job executing inside a thread means that this thread will be put in a sleeping state for 50ms. During this time the OS scheduler can allocate computational resources from a CPU core to the 4 other threads which will also be put in a sleeping state for 50 ms during the trip over the wire. This way we will have 5 workers sleeping at the same time and all waiting on IO to keep executing. Once a worker receives a response it will keep executing once the OS scheduler gives it some CPU time.
 
-With that said, going back to the limitations of MRI only being able to run concurrently, it does not seem like it would make much of a difference to use more threads, if only one thread can run at a time. However, because email sending is considered an IO-blocking job, a job where you have idle time, the OS scheduler can schedule another thread to be active while the current active thread is idly waiting for a response. The point here is if a job has 99% of its execution time sitting idly, more threads will help reduce the total execution time than if you were to only have a single thread working sequentially. That's because even if a thread is not active, the idle time is still being "worked on".
+The point here is that we cannot have threads running in parallel, but if the job being executed inside a thread has to wait on IO for 99.99% of the total execution job time then multiple threads can spend almost all of this time waiting simultaneously, in parallel, instead of having a single thread having to wait on all jobs sequentially.
+
+After implementing Concurrency by using multiple workers in Workerholic we decided to benchmark, using MRI, the effect of having multiple workers working on different types of jobs:
+- Non-blocking jobs: empty jobs
+- CPU-blocking jobs: calculate primes up to 1,000,000
+- IO-blocking jobs: sleep for 500ms to simulate a third party API call (based on GitHub API call response time)
 
 ![benchmark_workers_count](/images/benchmark_workers_count.png)
 
-And as you can see from the results here: for non-blocking and CPU-blocking jobs, having threads don't help the situation. In fact, it makes it worse due to the overhead incurred from switching between threads. But if you look at the IO-blocking jobs: with one worker, it would've taken very long, 5034 seconds in fact and way off the chart; the y-axis has been capped to give you a better representation of the rest of the data. With 25 workers, the tasks perform almost 25x as fast. At 100 workers, it's almost 4 times as fast as 25 workers.
+As we can see from the results here: for non-blocking and CPU-blocking jobs, multiple workers doesn't help the situation because of the GIL in MRI. In fact, it makes it worse due to the overhead incurred from context switching between threads. But if you look at the IO-blocking jobs: with one worker, it would've taken a very long time, 5034 seconds, way off the chart (the y-axis has been capped to give a better representation of the rest of the data). With 25 workers, the tasks perform almost 25x faster. At 100 workers, it's almost 100x faster.
+
+In the next section, we will take a look at how concurrency is implemented in Workerholic.
 
 ##### Concurrency in Workerholic
 ![efficiency_concurrency_workerholic](/images/efficiency_concurrency_workerholic.png){:width="700"}
