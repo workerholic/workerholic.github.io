@@ -648,14 +648,16 @@ end
 We make an assumption that there would be 25 different job classes, and from there if we took one data point a day, that would give us 9000 fields which translates to 0.1MB, once an hour for 219,000 fields which translate to 1.7MB, and once per minute for 13M fields which translates to 100MB. From this, we realized that once/day is the only viable solution to be able transfer information over the wire quickly.
 
 ### Configurability
-Moving on to our first bonus feature: configurability. We wanted Workerholic to be versatile and satisfy the needs of the developer. Background job processors are powerful in what they accomplish. But all applications are different. Some may have a million jobs per day, while some maybe only have 10. In which case, we want our background job processor to have the option for the developer to change what they want to best suit their application's needs.
+Another common attribute of BJPs is the ability to configure and adjust them to the needs of the developer. Some web applications may have a million background jobs per day, while some maybe only have 10. In which case, it's safe to assume that the main configuration options should not be set once and for all by the BJP's developers - by not doing so we let our end-users take control of the most important parameters. In addition, this removes the guessing part on the BJP developer's end - now there's no need to think about every possible use-case.
+Common configuration options include grouping jobs by type (which means using multiple queues), enable parallel execution (especially in MRI) by spawning multiple processes, and be able to run on multiple Ruby implementations like JRuby or Rubinius. The challenge for Workerholic was how to make it configurable to satisfy the needs of most of our users (or potential users)
 
 ![configurability_CLI](/images/configurability_CLI.png)
 
-The configurability options we included are auto-balancing workers, an option to set the number of workers based on your application's needs, an option to load your application by supplying a path, an option to specify the number of processes you want to spin up, and the number of connections in the Redis connection pool. All those options are packaged up into a simple and intuitive API. And like all other command-line tools you've experienced, we have the `--help` flag to show you how to use these options.
+And how we tackled the configurability problem is by having multiple configuration options. We provide an option to auto-balance workers, an option to set the number of workers based on your application's needs, an option to load your application by supplying a path, an option to specify the number of processes you want to spin up, and the number of connections in the redis connection pool. All those options are packaged up into a simple and intuitive API. And like all other good command-line tools, we have the --help flag to show you how to use these options.
 
 ### Ease of Use
 Next bonus feature: ease of use. We wanted to make Workerholic easy to use and work right our of the box, as well as make it friendly with the popular frameworks in the Ruby ecosystem like Rails.
+We mention Rails integration not only because it's a good-to-have feature, but because Rails has become a gold standard of Ruby web-development. And since Workerholic's core functionality revolves around web-applications, it does not make much sense to build it without Rails integration.
 
 #### Default Configuration
 ```ruby
