@@ -43,6 +43,7 @@ Above is a diagram of the overall architecture of our BJP, Workerholic.
 The core of this project was to build a BJP from scratch and sharing our findings, what we learned and the challenges we faced. Next, we will dive into each feature that we deemed belonged into a BJP and how they are incorporated in Workerholic.
 
 ### Reliability
+
 A common feature developers want out of a BJP is to be reliable. When performing a job, a network issue that prevents email sending could occur, or the job could be misconfigured. The main application could crash or the BJP could crash. Regardless of the reason, we want to make sure that jobs are not lost.
 
 How can we make our BJP reliable?
@@ -192,31 +193,47 @@ end
 This will allow the worker to finish executing its current job. Afterwards, we `join` each of our worker with our main thread of execution. We will touch on why this is important in a later section, for now it is only useful to know that the workers will be waited on before Workerholic exits.
 
 ### Efficiency
-Let's shift gears a little bit and start talking about how Workerholic is efficient.
+
+Efficiency is another core feature for a BJP. Why does a BJP need to be efficient? How can we build an efficient? Those are the questions that we will answer in the following sections.
 
 #### An Example Scenario
 
 ##### Scenario
-Suppose we have a huge Rails application with the follow statistics:
-* 1000 average queries per second (QPS)
-* 10% of those is email sending
-* 1% image processing
 
-Also suppose that we a machine with the follow specs:
+Suppose we have a significantly big Rails application with the following statistics:
+* 1000 average queries per second (QPS)
+* 10% of these queries involve some email sending
+* 1% of these queries involve some image processing
+
+Also suppose we have a machine with the following specs:
 * 4GB RAM
-* 4 CPU cores.
+* 4 CPU cores
 
 ##### Challenge
-The challenge we have here is how do we maximize the use of available resources?
+
+How can we build a BJP that will maximize the use of available hardware resources?
 
 #### Concurrency
 
 ##### Email Jobs calculations
-To begin braeking down our example scenario, let's make the assumption that it would take an average of 50ms to send an email; this is the time it takes between making the request and getting a response from the email service. If we take a 24 hour window, at 86400 seconds per day and 1000 QPS, we will get 86.4 million requests per day, 10% of which are email which means 8.64 million email sending background jobs. If each takes an average of 50ms, it means that in a span of 24 hours, we have a list of jobs that will take 120 hours to process, which gives us an enqueuing:processing ratio of 1:5. If we left this unchecked and allowed these to be performed synchronously, then over longer periods of time, we will get a backlog of background jobs.
 
-![serialized_job_length_redis](/images/serialized_job_length_redis.png)
+First of all we need to do a bit of calculations in order to understand the problem we are facing with the current scenario we have:
+- Let's assume it would take an average of **50ms** for a trip over the wire (sending a request and receiving a response) to the Email Service Provider of the Rails application in our scenario.
+- For a **24 hour window**, at 86,400 seconds per day and **1000 QPS**, we will get **86.4 million requests per day**.
+- **10%** of these requests involve sending an email. This means sending **8.64 million email** for a 24 hour window.
+- If sending an email takes an average of 50ms, it means that in a span of 24 hours, we have a list of jobs that will take **120 hours to process**, which gives us an enqueuing:processing ratio of **1:5**. In other words, in 24 hours time there can only be `8.64M / 5 = 1.73M` out of 8.64M jobs that can be performed.
 
-We pushed 100,000 jobs into our main queue. We found that on average, each serialized job in Workerholic takes up 26 bytes in Redis (`serializedlength` / 100,000). After a week, we'd have a backlog of 48M jobs that still needs to be processed which is equivalent to 1.18GB of memory stored. So the challenge for us here is how do we even out enqueuing throughput and processing throughput? We should not slow down the enqueuing throughput or else your web application will face the similar unresponsive issues again waiting for the jobs to enqueue before moving on, so let's focus on increasing the processing throughput.
+This insight raises two issues:
+1. Increased latency: for every day that passes there are 4 more days of email sending that need to be performed. This means that any job enqueued after the first 24 hours won't be executed until the next 96 hours *(120 - 24)* have passed, since it is the time it would take to perform all the jobs that were enqueued before.
+
+2. Quickly hitting storage limit:
+  - In the context of Workerholic a job takes about 26 bytes on average. We calculated this number by pushing 100,000 jobs into a job queue, getting the total size of the list and dividing it by 100,000. ![serialized_job_length_redis](/images/serialized_job_length_redis.png)
+  - After 7 days, we'd have a backlog of `8.64M * 7 - (1.73M * 7) = 48.4M` email sending jobs that still need to be processed.
+  - These jobs would need `48.4M * 26B = 1.17GB` of memory in order to be stored in Redis.
+
+An additional backlog of 96 hours of email sending jobs everyday, along with an additional 1.17GB of memory occupied by this same backlog of email sending jobs every week make for a very inefficient background job system.
+
+So, here the challenge for us here is to even the enqueuing throughput and the dequeuing throughput. how do we even out enqueuing throughput and processing throughput? We should not slow down the enqueuing throughput or else your web application will face the similar unresponsive issues again waiting for the jobs to enqueue before moving on, so let's focus on increasing the processing throughput.
 
 ##### Concurrency & Threads
 So we found that because our jobs would backlog to 120h in a span of 24h, that gives us a 1:5 enqueuing:processing ratio, meaning that we need 5 workers working concurrently in order to enqueue and process on a 1:1 ratio.
