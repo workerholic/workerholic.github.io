@@ -62,9 +62,11 @@ By relying on Redis and its robustness we made Workerholic reliable. Redis helps
 
 #### Retrying Failed Jobs & Job Scheduler
 
+Jobs can fail for numerous reasons that may or may not be in the developer's control such as temporary network issues, timeouts, invalid job, etc. Regardless of the reason, the BJP needs to handle these errors. In case the error being raised while the job is being performed is a momentary error, then it might be a good idea to have a way to retry this job later in the future.
+
 ![Retry Failed Jobs Diagram](/images/job_retry.png)
 
-Jobs can also fail for numerous reasons that may or may not be in the developer's control such as temporary network issues, timeouts, invalid job, etc. Regardless of the reason, Workerholic will attempt to retry a job. The way we set up job retrying is to schedule it for some time in the future, effectively turning a failed job into a scheduled job. Here is a little bit of code to show you what that looks like:
+Workerholic will attempt to retry failed jobs. The way we set up job retrying is to schedule it for some time in the future, effectively turning a failed job into a scheduled job. Here is the implementation of Workerholic's `retry` functionality:
 
 ```ruby
 module Workerholic
@@ -86,9 +88,9 @@ module Workerholic
 end
 ```
 
-Our jobs are simply Ruby objects with an attribute called `retry_count`, as the name suggests, keeps track of how many times a job has been retried. We will retry a job up to five times, if it ends up failing that many times. At that point, it's more likely that there's a problem with the job itself than something wrong with a component that's not in your control. In which case, we log that the job has failed and store that data into our stats and you as the developer can figure out what went wrong.
+Jobs are wrapped with Ruby objects which have an attribute called `retry_count`. As the name suggests, it is used to keep track of how many times a job has been retried. A job will be retried up to five times. At that point, it's more likely that there's a problem with the job itself rather than something wrong with an external component. In which case, Workerholic will log that the job has failed and store statistics data into Redis so that Workerholic's users can figure out what went wrong.
 
-As we mentioned earlier, we `JobRetry` enlists the help of `JobScheduler` to schedule a time for a failed job to be executed again, effectively turning it into a scheduled job:
+The code snippet above also shows that `JobRetry` enlists the help of `JobScheduler` to schedule a time for a failed job to be executed again, effectively turning it into a scheduled job. Here is how `JobScheduler` schedules jobs and enqueues jobs ready to be executed:
 
 ```ruby
 module Workerholic
@@ -124,7 +126,7 @@ module Workerholic
 end
 ```
 
-When Workerholic first boots up, we have a manager that `start`s a new scheduler thread which continuously calls `enqueue_due_jobs`. In `enqueue_due_jobs`, we have a private method that checks if there are any jobs due. If there is, we take a `peek` at our sorted set, deserialize the job, put it in the correct queue, and remove that job from the sorted set.
+When Workerholic first boots up, its `Manager` component is in charge of starting a new `JobScheduler` thread which continuously calls `enqueue_due_jobs`, every two seconds. In `enqueue_due_jobs`, we have a private method `job_due?` that checks if there are any jobs due. If there is, we take a `peek` at our sorted set, deserialize the job, put it in the correct queue, and remove that job from the sorted set.
 
 #### Graceful Shutdown
 So now that we have solved the issue of what to do in terms of application failure or job failures, we also want to handle what happens if you decide to shut down our Workerholic manually. We of course want to handle that gracefully to prevent future complications from occurring when you start up Workerholic again.
