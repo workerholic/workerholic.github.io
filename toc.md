@@ -127,7 +127,7 @@ module Workerholic
 end
 ```
 
-When Workerholic first boots up, its `Manager` component is in charge of starting a new `JobScheduler` thread which continuously calls `enqueue_due_jobs`, every two seconds. In `enqueue_due_jobs`, we have a private method `job_due?` that checks if there are any jobs due. If there is, we take a `peek` at our sorted set, deserialize the job, put it in the correct queue, and remove that job from the sorted set.
+When Workerholic first boots up, its `Manager` component is in charge of starting a new `JobScheduler` thread which continuously calls `enqueue_due_jobs`, every two seconds. In `enqueue_due_jobs`, a call to a private method `job_due?` checks if there are any jobs due. If there is, `JobScheduler` takes a `peek` at the scheduled jobs sorted set, deserializes the job, puts it in the correct queue, and removes that job from the sorted set.
 
 #### Graceful Shutdown
 So now that we have solved the issue of what to do in terms of application failure or job failures, we also want to handle what happens if you decide to shut down our Workerholic manually. We of course want to handle that gracefully to prevent future complications from occurring when you start up Workerholic again.
