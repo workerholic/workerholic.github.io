@@ -228,7 +228,7 @@ This insight raises two issues:
 
 2. Quickly hitting storage limit:
   - In the context of Workerholic a job takes about 26 bytes on average. We calculated this number by pushing 100,000 jobs into a job queue, getting the total size of the list and dividing it by 100,000. ![serialized_job_length_redis](/images/serialized_job_length_redis.png)
-  - After 7 days, we'd have a backlog of `8.64M * 7 - (1.73M * 7) = 48.4M` email sending jobs that still need to be processed.
+  - After 7 days, we'd have a backlog of `8.64M * 7 - (8.64M / 5) * 7 = 48.4M` email sending jobs that still need to be processed.
   - These jobs would need `48.4M * 26B = 1.17GB` of memory in order to be stored in Redis.
 
 An additional backlog of 96 hours of email sending jobs everyday, along with an additional 1.17GB of memory occupied by this same backlog of email sending jobs every week make for a very inefficient background job system.
@@ -270,9 +270,12 @@ As we can see from the results here: for non-blocking and CPU-blocking jobs, mul
 In the next section, we will take a look at how concurrency is implemented in Workerholic.
 
 ##### Concurrency in Workerholic
-![efficiency_concurrency_workerholic](/images/efficiency_concurrency_workerholic.png){:width="700"}
 
 In the context of Workerholic, we introduced concurrency in order to improve performance by having our workers poll and perform the jobs from within a thread. This way, as shown earlier, if jobs are IO bound we can make use of concurrency in order to maximize the dequeuing and processing throughput and bring that enqueueing:processing ratio down.
+
+![efficiency_concurrency_workerholic](/images/efficiency_concurrency_workerholic.png){:width="700"}
+
+In Ruby, we pass a block to `Thread.new` in which we poll from from Redis and process the serialized job, if any:
 
 ```ruby
 module Workerholic
@@ -296,21 +299,29 @@ module Workerholic
 end
 ```
 
-We have our workers `poll` Redis. If `poll` returns something, we process that job using `JobProcessor`.
+In the next section we will look at how creating new Threads impacts the consumption of the available resources.
 
 ##### Threads and Memory Consumption
+
+A Ruby Processes can spawn multiple threads. The memory model for a thread is as follows:
+
 ![efficiency_concurrency_threads_memory](/images/efficiency_concurrency_threads_memory.png){:width="450"}
 
-Processes have threads, and these threads can spawn more threads. These threads have their independent stacks, but they share a common heap belonging to the process that the threads belong to. For our email-sending job example above, we can spawn as many threads as we'd like to bring down our enqueuing:processing ratio. But what happens to our memory footprint?
+Each thread has an independent stack and the heap is shared between the main thread and all child-threads.
+
+For our email-sending job example above, we can spawn as many threads as we'd like to increase our processing throughput. But what happens to our memory footprint?
 
 ![memory_usage_threads](/images/memory_usage_threads.png){:width="600"}
 
-Not a problem! As you can see in the graph above, having 24 more threads do not increase your memory consumption significantly. That is because threads are cheap, and most of the memory footprint comes from the heap of the process.
+As shown in the above bar chart, spawning 24 additional threads has a relativelty low impact on memory consumption. That is because threads are cheap, and most of the memory footprint comes from the heap, which is shared among all the 25 threads.
+
+Now that we understand how threads can enable concurrency and help us solve the problem at hand, it is also important to understand how they can hurt us.
 
 ##### Concurrency Issues & Thread-Safety
-While spawning more threads is cheap and significantly increases processing throughput, multi-threading introduces a new concern called *thread-safety*. When code is "thread-safe", it means that the state of the resources behave correctly when multiple threads are using and modifying those resources.
 
-In MRI, core methods are thread-safe, so we don't need to worry about them. However, user-spaced code is not thread-safe, because it may introduce race conditions. Race conditions occur when two or more threads are competing to modify the same resource. This happens because the atomicity of the operation is not guaranteed and the OS scheduler can interrupt the execution of code at any time and schedule another thread. Let's take a look at the `PaymentJob` class:
+While spawning more threads is cheap and significantly increases processing throughput, multi-threading introduces a new concern called **thread-safety**. When code is *thread-safe*, it means that the state of the resources behave correctly when multiple threads are using and modifying those resources.
+
+In MRI, core methods are thread-safe, so we don't need to worry about them. However, user-spaced code is not thread-safe, because it may introduce **race conditions**. Race conditions occur when two or more threads are competing to modify the same resource. This happens because the atomicity of the operation is not guaranteed and the OS scheduler can interrupt the execution of code at any time and schedule another thread. Let's take a look at the following example:
 
 ```ruby
 $balance = 0
@@ -335,7 +346,7 @@ end.each(&:join)
 puts "Final balance: #{$balance}"
 ```
 
-Above we have a global variable `$balance` and a `PaymentJob` class with a instance method `perform` which modifies `$balance`. Then we create 10 threads, and have each of those threads create a new instance of `PaymentJob` and calls `perform` on the instance, each instance trying to increment `$balance` to 1,000,000. At the end, we should end up with 10,000,000, right?
+Above we have a global variable `$balance` and a `PaymentJob` class with an instance method `perform` which mutates `$balance` by incrementing it by one, 1,000,000 times. Then we create 10 threads, and have each of those threads create a new instance of `PaymentJob` and calls `perform` on the instance. At the end, we should end up with 10,000,000. Let's run this program and see what we get:
 
 ```
     $ ruby concurrency_issues_example.rb
@@ -349,8 +360,9 @@ Above we have a global variable `$balance` and a `PaymentJob` class with a insta
 
 As you can see here, that is definitely not the case. Why?
 
-Because the code above is not thread-safe. As mentioned earlier, when we have multiple threads trying to access and modify the same resource, `$balance` in this case, we have a race condition. A thread can enter the `perform` method which first sets `current_balance = $balance`, and then the OS scheduler can pause that thread and run another thread to do the same thing. So now you have two threads (and potentially more) starting its `current_balance` from 0 rather than a stacking multiple of 1,000,000. In the end, your final balance can be any multiple of 1,000,000 between 1,000,000 and 10,000,000. In other words, you cannot guarantee that the code will work as expected, and results may be different each time you run this program. So how do we prevent this?
+Because the code above is not thread-safe. As mentioned earlier, when we have multiple threads trying to access and modify the same resource, `$balance` in this case, we have a race condition. A thread can enter the `perform` method which first sets `current_balance = $balance`, and then the OS scheduler can pause that thread and run another thread to do the same thing. So now you have two threads (and potentially more) starting its `current_balance` from 0 rather than a stacking multiple of 1,000,000. In the end, your final balance can be any multiple of 1,000,000 between 1,000,000 and 10,000,000. In other words, you cannot guarantee that the code will work as expected, and results may be different each time you run this program.
 
+Let's look at another example in order to understand how tricky concurrenc issues can be:
 
 ```ruby
 $balance = 0
@@ -375,6 +387,8 @@ end.each(&:join)
 puts "Final balance: #{$balance}"
 ```
 
+The above example should produce the same result as the previous one. The difference here is that instead of having `perform` increment `new_balance` by one, 1,000,000 times, we increment it by one, one time, and call `perform` 1,000,000 times.
+
 ```
     $ ruby concurrency_issues_example.rb
     $ Final balance: 10000000
@@ -385,13 +399,34 @@ puts "Final balance: #{$balance}"
 
 ```
 
-{Insert text here later}
+As shown above it seems like everything works fine in this context. Why?
+
+Because the perform method is so cheap in terms of computational resources that the operation performed in it becomes atomic and thus doesn't introduce a concurrency issue. The problem with this example is that the atomicity of the operations executed in the `perform` method is absolutely not guaranteed and we cannot rely on the fact that it *should* work.
+
+These examples are used to demonstrate that in the context of Workerholic your jobs should be thread-safe. If you cannot guarantee that your jobs are thread-safe then you should only use 1 worker, so you only have one thread and spin up mutliple instances of workerholic if more processing throughput is needed. This will introduce parallelism, which is another way of maximizing the processing throughput.
 
 #### Parallelism
-Concurrency alone is good enough for IO-blocking jobs, but as you saw in a previous chart, it does nothing for CPU bound blocking jobs. Why? And what do we do?
+
+Concurrency alone is good enough for IO-blocking jobs, but as you saw in a previous chart, it does nothing for CPU bound blocking jobs. Why? And what can we do to maximize processing throughput for CPU bound jobs?
 
 ##### Image Processing Jobs Calculations
-A common CPU-blocking job is image processing. So now let's say an image processing job takes 4 seconds on average, and recall from earlier, we said that we have a large Rails application with 1000 QPS and 1% of that is image processing, which means we have 864,000 image processing jobs per day, multiply that by 4s and you have 960 hrs worth of processing lined up in a period of 24 hrs, giving us a 1:40 enqueue:processing ratio. Similar to the email example, as the this gets backlogged, we will start to run out of memory. So same challenge: evening out enqueuing and processing throughput, but our previous solution won't work. Why?
+
+A common CPU-blocking job is image processing.
+- In the context of our scenario let's say an image processing job takes 4 seconds on average.
+- Recall from earlier, we said that we have a large Rails application with 1000 QPS and 1% of that is image processing, which means we have 864,000 image processing jobs per day
+- Multiply 864,000 by 4s and you have 960 hrs worth of processing lined up in a period of 24 hrs, giving us a 1:40 enqueue:processing ratio.
+
+Similarly to the email example, this insight raises two issues:
+1. Increased latency: for every day that passes there are 39 more days of image processing that need to be performed. This means that any job enqueued after the first 24 hours won't be executed until the next 936 hours *(960 - 24)* have passed, since it is the time it would take to perform all the jobs that were enqueued before.
+
+2. Quickly hitting storage limit:
+  - In the context of Workerholic a job takes about 26 bytes on average.
+  - After 7 days, we'd have a backlog of `864,000 * 7 - (864,000 / 40) * 7 = 5.9` image processing jobs that still need to be processed.
+  - These jobs would need `5.9M * 26B = 146.2MB` of memory in order to be stored in Redis.
+
+An additional backlog of 936 hours of image processing jobs everyday, along with an additional 146.2MB of memory occupied by this same backlog of image processing jobs every week make for a very inefficient background job system.
+
+The challenge for us here is to even the enqueuing throughput and the dequeuing throughput. We should not slow down the enqueuing side or else our web application will become unresponsive, waiting for jobs to be enqueued before moving on, so let's focus on increasing the processing throughput.
 
 ##### Parallelism & Processes
 ![efficiency_parallelism_processes](/images/efficiency_parallelism_processes.png){:width="300"}
