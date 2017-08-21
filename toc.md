@@ -657,7 +657,7 @@ And how we tackled the configurability problem is by having multiple configurati
 
 ### Ease of Use
 Next bonus feature: ease of use. We wanted to make Workerholic easy to use and work right our of the box, as well as make it friendly with the popular frameworks in the Ruby ecosystem like Rails.
-We mention Rails integration not only because it's a good-to-have feature, but because Rails has become a gold standard of Ruby web-development. And since Workerholic's core functionality revolves around web-applications, it does not make much sense to build it without Rails integration.
+We mention Rails integration not only because it's a good-to-have feature, but because Rails has become a gold standard of Ruby web-development ecosystem. And since Workerholic's core functionality revolves around web-applications, it does not make much sense to build it without Rails integration.
 
 #### Default Configuration
 ```ruby
@@ -678,7 +678,7 @@ module Workerholic
 end
 ```
 
-To make it work out of the box, Workerholic has default options set up already so you don't need to supply any of the options we mentioned previously. Our default is 25 workers, and the default number of Redis connections is the number of workers + 3, in this case, 28. This is the three additional connections we need for the job scheduler, worker balancer, and the memory trackers.
+To make it work out of the box, we have default options set up already so you don't need to supply anything we mentioned previously. By default, there will be 25 workers and the default number of redis connections is the number of workers + 3, in this case, 28. This is the three additional connections we need for the job scheduler, worker balancer, and the memory tracker.
 
 ```ruby
 module Workerholic
@@ -697,7 +697,7 @@ module Workerholic
 end
 ```
 
-Workerholic also has a default for 1 process and evenly balancing workers. If `options[:processes]` is defined, we fork processes. Otherwise, we just start the manager for one process.
+Workerholic also has a default for 1 process and evenly balancing workers. If `options[:processes]` is defined, we fork the specified number of processes. Otherwise, we just start the manager for one process.
 
 #### Rails Integration
 A library built for web applications written in Ruby would be quite useless, or at best very unpopular, if it did not work with Rails.
@@ -742,10 +742,12 @@ module Workerholic
 end
 ```
 
-When workerholic starts, it'll load the app which load rails if it detects a specific file in Rails, and then we require our own active job adapter and load that in along with the rest of the rails application.
+When Workerholic starts, it'll load the app which load Rails if it detects that it's working a Rails application, and then we require our own active job adapter and load that along with the rest of the Rails application.
 
 ### Testing
-As we developed our features, we needed to tests for our code.
+As we developed our features, we needed to test our code.
+
+To set up, we set up redis with a different port if the environment is testing, to separate it from our development environment. And also, we wanted to flush redis after each run to ensure that it is a valid state for every spec.
 
 #### Testing Setup
 ```ruby
@@ -771,10 +773,9 @@ RSpec.configure do |config|
 end
 ```
 
-To set up, we set up redis with a different port if the environment is testing, to separate it from our development environment. And also, we wanted to flush redis after each run to ensure that it is a valid state for every spec.
-
 #### Testing and Threads
-What we found along the way is testing threaded code is not trivial. We spent quite some time trying to figure this out, and this is because having multiple threads means that there is naturally asynchronously execution, meaning that we cannot expect the results immediately. Additionally, there is potential dependency on other threaded components.
+What we found along the way is testing threaded code is not trivial. We spent quite some time trying to figure this out, and this is because having multiple threads means that there is naturally asynchronous execution, meaning that we cannot expect the results immediately. Additionally, there is potential dependency on other threaded components, which add up to the overall complexity.
+
 ```ruby
 # spec/worker_spec.rb
 
@@ -814,12 +815,22 @@ In order to get around the asynchronous nature of threads, instead of asserting 
 #### Workerholic compared to the Gold Standard: Sidekiq
 ![benchmark_workerholic_sidekiq](/images/benchmark_workerholic_sidekiq.png)
 
-Finally, we wanted to compare with Sidekiq one last time with each types of jobs individually. We're on par with Sidekiq, and only slightly faster than Sidekiq each time, and as we mentioned before this is because Sidekiq is a more mature and robust solution with many more features and handles more use cases.
+Finally, we wanted to compare with Sidekiq one last time with each types of jobs individually. We're on par with Sidekiq, and only slightly faster than Sidekiq each time, and as we mentioned before this is because Sidekiq is a more mature and robust solution with a much larger feature-set.
 
 #### JRuby
 ![benchmark_jruby](/images/benchmark_jruby.png)
 
-We also decided to compare the results of jRuby vs MRI. Because jRuby can run in parallel without the need of spinning up multiple processes, we found that CPU blocking jobs were much faster in jRuby than in MRI, which is what we would expect.
+We also decided to compare the results of JRuby vs MRI. Because jRuby can run in parallel without the need of spinning up multiple processes, we found that execution of CPU blocking jobs was much faster in JRuby than in MRI, which is what we would expect.
 
 ## Conclusion
-N/A.
+
+It was a lot of fun to work on this project. We learned a lot about threaded code, memory usage by different types of OS entities, Redis data structures and other Ruby interpreters. We really hope our findings will help other developers in their journey through the pathways of threaded code.
+
+While our first version works, we are far from done. There are still a handful of features we'd like to add in the near future. Some of these faeatures are:
+
+* Automatically restart main Workerholic process in the event of failure (to improve reliability in case of emergency)
+* Establish more reliable and reactive jobs persistence methods (to lose even less jobs than we do at this moment if Redis crashes)
+* Identify other potential use-cases for Workerholic and adapt our codebase accordingly
+
+We hope you enjoyed reading about our journey as much as we enjoyed the journey itself!
+
