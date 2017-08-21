@@ -656,8 +656,13 @@ Common configuration options include grouping jobs by type (which means using mu
 And how we tackled the configurability problem is by having multiple configuration options. We provide an option to auto-balance workers, an option to set the number of workers based on your application's needs, an option to load your application by supplying a path, an option to specify the number of processes you want to spin up, and the number of connections in the redis connection pool. All those options are packaged up into a simple and intuitive API. And like all other good command-line tools, we have the --help flag to show you how to use these options.
 
 ### Ease of Use
-Next bonus feature: ease of use. We wanted to make Workerholic easy to use and work right our of the box, as well as make it friendly with the popular frameworks in the Ruby ecosystem like Rails.
-We mention Rails integration not only because it's a good-to-have feature, but because Rails has become a gold standard of Ruby web-development ecosystem. And since Workerholic's core functionality revolves around web-applications, it does not make much sense to build it without Rails integration.
+A background job processor shoud be easy to setup and use. In the context of the Ruby ecosystem, this means having a way to automatically integrate with Rails and also have a default configuration that would work out of the box for most use cases.
+Rails integration is important not only because it's a good-to-have feature, but more because Rails has become a gold standard of Ruby web-development ecosystem. And since Workerholic's core functionality revolves around web-applications, it does not make much sense to build it without complete Rails integration.
+
+Like any other project, background job processors need to satisfy the needs of the majority of users. To achieve that, we needed to think about some sensible default configuration options. By doing so we allow users to focus on the needs of their web applications and not the tweaking of some arcane parameters.
+To make it work out of the box, we pre-defined default options so you don't need to supply anything we mentioned previously. By default, there will be 25 workers and the default number of Redis connections is the number of workers + 3, in this case, 28. This is the three additional connections we need for the job scheduler, worker balancer, and the memory tracker.
+Workerholic also has a default for 1 process. If `options[:processes]` is defined, we fork the specified number of processes. Otherwise, we just start the manager for one process.
+Since we don't make any assumptions about the types of jobs your web application might have, Workerholic will use evenly balancing workers algorithm.
 
 #### Default Configuration
 ```ruby
@@ -678,8 +683,6 @@ module Workerholic
 end
 ```
 
-To make it work out of the box, we have default options set up already so you don't need to supply anything we mentioned previously. By default, there will be 25 workers and the default number of redis connections is the number of workers + 3, in this case, 28. This is the three additional connections we need for the job scheduler, worker balancer, and the memory tracker.
-
 ```ruby
 module Workerholic
   class Starter
@@ -696,8 +699,6 @@ module Workerholic
   end
 end
 ```
-
-Workerholic also has a default for 1 process and evenly balancing workers. If `options[:processes]` is defined, we fork the specified number of processes. Otherwise, we just start the manager for one process.
 
 #### Rails Integration
 A library built for web applications written in Ruby would be quite useless, or at best very unpopular, if it did not work with Rails.
@@ -742,12 +743,12 @@ module Workerholic
 end
 ```
 
-When Workerholic starts, it'll load the app which load Rails if it detects that it's working a Rails application, and then we require our own active job adapter and load that along with the rest of the Rails application.
+When Workerholic starts, it loads the main application in order to have access to the job classes. This way it can perform the jobs on the processing side. In case a Rails app is detected it will load the Rails application codebase along with our own active job adapter.
 
 ### Testing
-As we developed our features, we needed to test our code.
+As we were developing our features, we needed to test our code.
 
-To set up, we set up redis with a different port if the environment is testing, to separate it from our development environment. And also, we wanted to flush redis after each run to ensure that it is a valid state for every spec.
+For the testing environment, we set up Redis with a different port, so that it does not pollute our development Redis database. We also flush Redis after each run to ensure that it provides a valid state for every test case.
 
 #### Testing Setup
 ```ruby
@@ -759,6 +760,7 @@ module Workerholic
   # ...
 end
 ```
+
 ```ruby
 # spec/spec_helper.rb
 
@@ -824,7 +826,17 @@ We also decided to compare the results of JRuby vs MRI. Because jRuby can run in
 
 ## Conclusion
 
-It was a lot of fun to work on this project. We learned a lot about threaded code, memory usage by different types of OS entities, Redis data structures and other Ruby interpreters. We really hope our findings will help other developers in their journey through the pathways of threaded code.
+It was a lot of fun to work on this project! Our goal was to share potentially useful knowledge with the community and to introduce background job processors to people unfamiliar with them. After all it's usually a very interesting enterprise to understand how something works under the hood!
+
+As for us, we learned and expanded our knowledge about:
+
+* concurrency, and specifically threads
+* parallel execution using multiple processes and other Ruby interpreters
+* lower level details about threads and processes, such as their memory footprint
+* the impact on computational and memory resources when using multiple threads and multiple processes
+* using Redis as a key:value store and taking advantage of its awesome features such as native data structures, great performance and snapshots
+* building a Ruby gem
+* providing users with an easy-to-use yet powerful CLI
 
 While our first version works, we are far from done. There are still a handful of features we'd like to add in the near future. Some of these faeatures are:
 
