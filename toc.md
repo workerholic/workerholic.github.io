@@ -298,11 +298,11 @@ module Workerholic
 end
 ```
 
-In the next section we will look at how creating new Threads impacts the consumption of the available resources.
+In the next section we will look at how creating new Threads impacts the consumption of the available memory.
 
 ##### Threads and Memory Consumption
 
-A Ruby Processes can spawn multiple threads. The memory model for a thread is as follows:
+A Ruby process can spawn multiple threads. The memory model for a thread is as follows:
 
 ![efficiency_concurrency_threads_memory](/images/efficiency_concurrency_threads_memory.png){:width="450"}
 
@@ -428,77 +428,234 @@ An additional backlog of 936 hours of image processing jobs everyday, along with
 The challenge for us here is to even the enqueuing throughput and the dequeuing throughput. We should not slow down the enqueuing side or else our web application will become unresponsive, waiting for jobs to be enqueued before moving on, so let's focus on increasing the processing throughput.
 
 ##### Parallelism & Processes
+
+As mentioned earlier, image processing jobs are CPU-bound, because they require CPU time only, no/insignificant IO time during which the thread performing the job can be put into a **sleep**ing state. Meaning, we cannot take advantage of multithreading for this type of jobs in the context of MRI.
+Since our machine has **multiple cores**, we can take advantage of this fact by running **multiple processes in parallel**.
+When the CPU has multiple cores, the OS scheduler can allocate some computational resources from the different cores to different processes.
+The CPU cores run in parallel, hence, if we have two CPU cores we can have computational resources allocated to 2 different processes at the same time, effectively allowing them to run in parallel.
+Since we have 4 cores, we can spin up 4 processes and reduce the enqueuing:processing ratio from 1:40 to 1:10.
+
 ![efficiency_parallelism_processes](/images/efficiency_parallelism_processes.png){:width="300"}
 
-As we've said, image processing is CPU-bound, because this type of job requires CPU time only, there is no idle time in which the thread can be put to sleep. This means that having more threads will not help the situation because your CPU core is already working full-time to process this job, and we cannot take advantage of concurrency and multithreading for this type of job in the context of MRI. Since our machine has multiple cores, we can take advantage of this fact by running multiple processes in parallel. When the CPU has multiple cores, the OS scheduler can allocate some computational resources from the different cores to different processes.
+We benchmarked how Workerholic performed when we ran 2 processes vs. 1 process:
 
 ![benchmark_2_processes](/images/benchmark_2_processes.png)
 
-Here's we benchmarked how Workerholic performed when we ran 2 processes vs. 1 process. We can see that having more processes mean increase in performance, but at the cost of more memory. In each of these cases, we can see that the time is around half. However, that is not always guaranteed because of the way your CPU cores are assigned by your operating system.
+We can see that having more processes mean increase in performance. In each of these cases, time is divided by two. This is not a 100% guarantee, some factors need to be taken into account, such as:
+- other processes running and requiring some computational resources, effectively reducing the CPU time scheduled for our processes
+- relying on the OS scheduler for optimizing the sharing of computational resources, effectively introducing randomness from our point of view
+
+This is why in the chart above you can see CPU blocking jobs execution time divided by more than two. This is because the machine that ran this benchmark had two CPU cores, the first one was used at 30% to run the OS along with other processes, while the other was used at 1-2%. With two processes the OS Sceduler was able to schedule 70% of the first CPU core's time plus 98-99% of the second CPU core's time instead of only 70% of the first CPU core's time.
+
+In the next section we will see how we introduced parallelism specifically for our BJP Workerholic.
 
 ##### Parallelism in Workerholic
+
+The diagram below shows how Workerholic uses multiple processes if we had the CPU cores available to do so. The OS scheduler schedules the each CPU core's time to each process, each process has its own worker threads which can poll jobs from Redis and work on them. So if we have four CPU cores we can have computational resources allocated to four different processes potentially at the same time, effectively allowing them to run in parallel.
+
 ![parallelism_workeholic_diagram](/images/parallelism_workeholic_diagram.png)
 
-The diagram above shows how Workerholic uses multiple processes if we had the CPU cores available to do so. The OS scheduler schedules the cores to each process, each process has its own worker threads which can poll jobs from Redis and work on them. So if we have four CPU cores we can have computational resources allocated to four different processes potentially at the same time, effectively allowing them to run in parallel, reducing the enqueuing:processing ratio from 1:40 to 1:10.
+Here is the code we wrote to make the above model possible:
+
+```ruby
+module Workerholic
+  class Starter
+    # ...
+
+    def self.launch
+      fork_processes if options[:processes] && options[:processes] > 1
+
+      Workerholic.manager = Manager.new(auto_balance: options[:auto_balance])
+      Workerholic.manager.start
+    end
+
+    def self.fork_processes
+      (options[:processes] - 1).times do
+        PIDS << fork do
+          Workerholic.manager = Manager.new(auto_balance: options[:auto_balance])
+          Workerholic.manager.start
+        end
+      end
+
+      PIDS.freeze
+    end
+
+    # ...
+  end
+end
+```
+
+We fork processes if the user specified the option when starting Workerholic. Then we fork the number of processes specified minus one since the main process will serve as one of these processes, effectively having 1 parent process and N - 1 children processes. We make sure to store the processes ids `pid`, inside a `PIDS` constant for future reference. In each of these children processes we start the manager, which starts all the workers and the other components such as the Job Scheduler. Once these children processes are started we start the manager in the parent process.
+
+In the next section we will look at how forking children processes impacts the consumption of the available memory.
 
 ##### Processes and Memory consumption
-We're able to create more processes, but surely that comes with a cost like everything else right?
+
+A Ruby process can fork multiple children processes. The memory model for a process is as follows:
 
 ![efficiency_processes_memory_design](/images/efficiency_processes_memory_design.png)
 
-Before we get into that, let's talk a little bit more about processes. Each process has its own address space, stack, and heap. When you fork a process in Ruby, you create a child process which will get its own stack and share the same heap initially. This is called copy-on-write, meaning that the child process will share the same resources with the parent process, until modifications are made to that resource, in which case, that resource will be written into the child's own heap.
+Each process has its own address space, stack, and heap. When a process is forked in Ruby, a child process is created, which will get its own stack. As for the heap, depending on the OS the copy-on-write mechanism is employed:
+- children processes start by referencing the parent's process heap, effectively sharing the same resources with the parent process
+- as modifications to the resources on the heap occur, children processes write the mutated resources to their own heap, leaving the parent's heap unmodified
+
+We benchmarked the memory consumption of having one process and two processes by using a Rails application. Having one process takes up 125MB of memory, but having two processes don't take twice as much memory. This is the copy-on-write mechanism at work.
 
 ![memory_usage_processes](/images/memory_usage_processes.png)
 
-Here, we benchmarked both having one process and two processes. Having one process takes up 125MB of memory, but having two processes don't take twice as much memory. This is the copy-on-write mechanism at work.
+Let's assume the Rails application in our scenario is a pretty big Rails app and takes about 400MB. By forking 4 processes Workerholic, will at most take 1.6GB of memory out of 4GB, meaning, forking 4 processes is a viable option.
 
-As we mentioned previously, using our four CPU cores, we can fork to a total of four processes and reduce our image processing enqueuing:processing ratio down to 1:10. But that is still not good enough. After an extended period of time, we will eventually end up with a backlog and a huge memory footprint. Where do we go from here?
+As we mentioned previously, using our four CPU cores, we can fork to a total of four processes and reduce our image processing enqueuing:processing ratio down to 1:10. But that is still not good enough. After an extended period of time, we will eventually end up with a backlog of jobs, effectively implicating a huge latency and memory footprint. What else can we do to even out or enqueuing:processing ratio?
 
 ### Scalability
 
-#### Scaling in the context of our scenario
 ![scalibility_image](/images/scalibility_image.png){:width="380" height="350"}
 
-Currently, we are using all of our resources on hand to evenly processing throughput, but with an enqueuing:processing ratio of 1:10. It is still not good enough. At this point, we have to scale our system. We have two options:
+#### Scaling in the context of our scenario
+
+We are currently maximizing the use of available resources by using concurrency and parallelism. In order to bring our enqueuing:processing down to a 1:1 ratio we need to scale either vertically or horizontally.
 
 ##### Scaling vertically
-We can get more cores on a single machine. If we get 20 cores, we still have a 1:2 enqueuing:processing ratio, so we will need 40 cores. This does not sound very plausible. Have you ever heard of a single machine having this many cores?
+
+Scaling vertically means increasing the amount of available resources by getting a better machine. We currently have 4 CPU cores and 4GB or RAM. By looking at [Digital Ocean](https://www.digitalocean.com/pricing/#droplet), their best machine is 20 CPU cores and 64GB or RAM. If we were to use one these machine instead of the current configuration we have we would be able to bring our enqueuing:processing ratio down to 1:2. The memory footprint for 20 processes will be of 8GB *(20 * 400MB)* at worst, which is acceptable since this machine would have 64GB of RAM.
+
+A 1:2 ratio will still generate a backlog of jobs, which is why we also need to scale horizontally.
 
 ##### Scaling horizontally
-We can instead buy more servers with less cores on each. We can buy 10 servers, each with four cores for a total of 40 cores and that will get the job done. This is way more realistic, as it would be akin to buying more worker dynos on Heroku for example.
+
+Scaling horizontally means increasing the amount of available resources by getting multiple machines. This gives us two options:
+- keeping our original configuration and get multiple identical machines. In our case, we would need 10 machines since we have a 1:10 (enqueuing:processing) ratio.
+- scale vertically first by getting a better machine, such as the one described in the previous section (20 cores, 64GB or RAM) and get multiple identical machins. In our case, we would need 2 machines since we have a 1:2 (enqueuing:processing) ratio.
+
+Whichever option is chosen, they will both even out the enqueuing:processing ratio, which was our goal from the beginning.
+By choosing any of these two options we need to consider the fact that, for this to be possible, we need to have BJP that is scalable. In the next section, we will look at how this is done for Workerholic.
 
 #### Workerholic: a scalable BJP
-Now we know that we want to scale horizontally. The question is how?
+
+Workerholic is scalable because we use Redis as a central data store for the jobs. Workerholic will still need access to the source code of the main application, but won't be tied to a specific instance of the main application. Meaning, there can be a cluster of web servers or a single web server and Workerholic will still work the same. It is only concerned with what is enqueued in Redis, not how many main application instances are running. Workerholic is also scalable because its workers only don't have a state except for the queue they're polling from, which is centralized with Redis and dynamically updated every second on the Wokerholic's side.
 
 ![scalibility_workerholic](/images/scalibility_workerholic.png)
 
-Well, that's easy. Workerholic is already scalable because we use Redis as a central data store for your jobs. Workerholic will still need access to the source code of your application, but Workerholic is not tied to a specific instance of your application, so you can have distributed web servers or a single web server and Workerholic will still work just fine. Workerholic can do this because its workers only care about the queue they're polling from, which is centralized with Redis.
+Workerholic is reliable, it uses concurrency, parallelism to be efficient and it is a scalable BJP. How does it compare to a gold standard like Sidekiq? What other optimizations can we introduce?
 
 ### Optimizations
-Once we had a fairly featured solution, we decided to compare against Sidekiq.
+
+When building a BJP it is important to see how the current implementation compares to a leader in the field. We decided to benchmark Workerholic against sidekiq in order to get some context as to where Workerholic is at and if we could optimize its performance.
 
 #### Serialization
+
+On our first iteration, we found that there was a great difference between Workerholic and Sidekiq; ours took much longer both on the enqueuing side and the processing side:
+
 ![optimizations_serialization_benchmark_yaml](/images/optimizations_serialization_benchmark_yaml.png)
 
-On our first iteration, we found that there was a great difference between Workerholic and Sidekiq; ours took much longer both on the enqueuing side and the processing side. Why was that? We looked into Sidekiq and found that it was using JSON serialization while we were using YAML, and so we decided to change our code to use JSON and see if that was really where the bottleneck was.
+What was our bottleneck? Sidekiq uses a similar model to Workerholic: concurrency via the use of threads. The difference seemed too big, especially since Workerholic should be a lighter BJP with less features and edge cases covered.
+
+The first thing we noticed is that both the enqueuing side and processing side were slower. This gave us a major insight into realizing it was a bottleneck present on both end of the spectrum. We started wondering if maybe there could be a problem performance hit because of serialization. Indeed, we were using YAML while Sidekiq is using JSON.
+So we decided to switch to a JSON serialization. The following YAML serialization:
+
+```ruby
+module Workerholic
+  class JobSerializer
+    # ...
+    def self.serialize(job)
+      YAML.dump(job.to_hash)
+    end
+
+    def self.deserialize(yaml_job)
+      job_info = YAML.load(yaml_job)
+      JobWrapper.new(job_info)
+    end
+
+    # ...
+  end
+end
+```
+
+Turned into the following JSON serialization:
+
+```ruby
+module Workerholic
+  class JobSerializer
+    # ...
+
+    def self.serialize(job)
+      JSON.dump(job.to_hash)
+    end
+
+    def self.deserialize(json_job)
+      job_info = JSON.parse(json_job, symbolize_names: true)
+
+      job_info[:klass] = job_info[:klass] ? Object.const_get(job_info[:klass]) : nil
+      job_info[:wrapper] = job_info[:wrapper] ? Object.const_get(job_info[:wrapper]) : nil
+
+      JobWrapper.new(job_info)
+    end
+
+    # ...
+  end
+end
+```
+
+After switching to JSON we benchmarked Workerholic against Sidekiq one more time:
 
 ![optimizations_serialization_benchmark_json](/images/optimizations_serialization_benchmark_json.png)
 
-And voila! Here are the results above. By changing our serialization strategy to JSON, we were able to improve our enqueuing duration by 70% and our processing duration by 55% compared to our YAML iteration. We're now slightly faster than Sidekiq!
+We were able to improve our enqueuing duration by 70% and our processing duration by 55% compared to our YAML iteration!
+Here the point is not to show that we're slightly faster than Sidekiq, because we probably aren't: we were benchmarking without logging out every single enqueued job and every single processed job, which slow down the performance a bit. But we are on par with Sidekiq's performance which is a great victory.
+
+We have improved our efficiency by changing our serialization strategy. Can we optimize Workerholic even further?
 
 #### Using Custom Algorithms
-We have improved our efficiency by changing our serialization strategy. Can we do better? We benchmarked against Sidekiq using 10,000 nonblocking, cpu-blocking, and IO-blocking jobs.
 
-![efficiency_algorithms_benchmark](/images/efficiency_algorithms_benchmark.png){:width="400"}
+For this optimization we decided to benchmark Workerholic against Sidekiq by using 10,000 non-blocking, cpu-blocking, and IO-blocking jobs.
 
-With Sidekiq's random polling algorithm, it took 242 seconds. Our turn. We benchmarked with our evenly balancing algorithm with an even number of workers for each queue regardless of job types or queue load, and we stand at 357s. Much worse...
+![efficiency_algorithms_benchmark](/images/efficiency_algorithms_benchmark_1.png){:width="400"}
 
-Next, we tried auto-balancing workers based on queue load, but still no assumption on jobs. Slightly better, but still not good enough. We went through a second iteration of auto-balancing where we identified IO-bound queues and CPU-bound queues, where we assign only one worker per CPU-bound queue and auto-balance the rest. As you may recall, having more workers on CPU-blocking jobs makes no difference, which is a waste of Workerholic's resources. With that we rang in at 223s, which is great! We call this algorithm the Adaptive and Successive Provisioning (ASP).
-
-*Note: we want to quickly mention that we did not build Workerholic to compete with Sidekiq, and that you should not prefer our library to theirs' or vice-versa. We just chose Sidekiq to benchmark against because it is the leader of background job processing in Ruby and we thought that is the bar we should aim for. Could we do better? Maybe, maybe not. We haven't tried to yet, because we were satisfied with the current results.*
+As shown in the above diagram, Sidekiq's random polling algorithm took 242 seconds. We decided to start with a simple and dynamic algorithm: evenly-balancing workers.
 
 ##### Evenly balanced workers
+
+The purpose of this algorithm is to attribute a fair amount of workers between each queue by dynamically assigning a queue to a worker, every second. This way if a queue is empty the workers that were polling from it can be evenly redistributed between the non-empty queues.
+
+Once we had a working implementation of the algorithm we decided to benchmark with the same scenario as we did for Sidekiq:
+
+![efficiency_algorithms_benchmark](/images/efficiency_algorithms_benchmark_2.png){:width="400"}
+
+The algorithm performed poorly compared to Sidekiq's random polling. It took 357 seconds to perform the same amount and type of jobs with our algorithm. This is because in the context of having CPU-blocking jobs, having multiple workers would not make a difference as compared to having one woker (when using MRI).
+
+How can Workerholic perform better?
+
 ##### Adaptive and Successive Algorithm (ASP)
+###### Iteration 1
+
+We decided to use a different, custom, algorithm: Adaptive and Successive Provisioning of workers based on queue load. This would allow workers to switch faster to IO queues in case there are any because CPU-bound are usually executed a faster rate than IO blocking jobs. Once again, we benchmarked using the same amount and type of jobs:
+
+![efficiency_algorithms_benchmark](/images/efficiency_algorithms_benchmark_3.png){:width="400"}
+
+The jobs were executed faster than our evenly-balancing algorithm but still much slower than Sidekiq's random polling. We thought we could do better and make Workerholic more efficient, which is why we went through a second iteration for our ASP algorithm.
+
+###### Iteration 2
+
+We decided that we needed a way to identify queues containing IO-bound from CPU-bound jobs. Our first iteration of ASP was an improvement, but in the case of having some queues containing CPU-bound jobs, we were still potentially assigning more than workers.
+
+The way we recognize which queues contain IO-bound jobs is by asking the user to flag the queues by adding `-io` at the end of the queue name. This way when we use our ASP algorithm we make sure to only assign only one worker per queue containing CPU-bound jobs and auto-balance the rest of the queues, which would be flagged as queues containing IO-bound jobs. As you may recall, having more workers on CPU-blocking jobs makes no difference, which is a waste of Workerholic's resources.
+
+![efficiency_algorithms_benchmark](/images/efficiency_algorithms_benchmark_3.png){:width="400"}
+
+As shown in the above diagram, the performance for this algorithm is much closer to Sidekiq's random polling and is seems to be performing better in this example scenario. Which is another great victory for us since we wanted to show how to build a BJP that would perform closely to the leaders in the field.
+
+*Note: We chose Sidekiq to benchmark against because it is the leader of background job processing in Ruby and we thought that is the bar we should aim for. These results should not be taken as a way to expose Workerholic being faster than Sidekiq. Workerholic is in its alpha stage and should not be used in production environments, this is first of all a project meant to be shared with the community and used to expose the different features and steps needed in order to build a BJP.*
+
+###### An Example
+
+Let's walk through the implementation of this ASP algorithm by using an example:
+
+![ASP_diagram_0](/images/ASP_diagram_0.png){:width="220"}
+
+We start with different queues, each having a different load. We have **25 workers**, which is Workerholic's default configuration.
+
+When Workerholic starts, so does our `WorkerBalancer`, which will default to evenly balancing workers unless an `auto` option is detected.
+
 ```ruby
 module Workerholic
   class WorkerBalancer
@@ -517,7 +674,7 @@ module Workerholic
 end
 ```
 
-When Workerholic starts, so does our `WorkerBalancer`, which will default to evenly balancing workers unless an `auto` option is detected.
+Next, we start the ASP algorithm inside a thread so it doesn't block the main thread of execution. The ASP algorithm will be run every second:
 
 ```ruby
 module Workerholic
@@ -540,7 +697,13 @@ module Workerholic
 end
 ```
 
-Here, we're showing what happens when Workerholic auto-balances its workers. It will auto-balance every second.
+At first, we assign one worker per queue.
+
+![ASP_diagram_1](/images/ASP_diagram_1.png){:width="350"}
+
+Then we need identify the IO queues and we provision them by using the ASP algorithm. In order to provision the queues we first need to calculate the average numbe of jobs that each worker should be executing if they were all given the same number of jobs. If queues were flagged as containing IO-bound jobs then we would only consider the load of these queues when calculating this average.
+
+Once the average number of jobs per worker is calculated we provision each queue with the adequate number of workers based on its load. Here is the implementation:
 
 ```ruby
 module Workerholic
@@ -566,8 +729,6 @@ module Workerholic
       distribute_unassigned_worker(total_workers_count)
     end
 
-    # ...
-
     def io_queues
       io_qs = queues.select { |q| q.name.match(/.*-io$/) }
 
@@ -577,20 +738,6 @@ module Workerholic
         io_qs
       end
     end
-
-    # ...
-  end
-end
-```
-
-![ASP_diagram_1](/images/ASP_diagram_1.png){:width="350"}
-
-Workerholic will `assign_one_worker_per_queue`, then take the total number of jobs in all the queues, divide that by the number of our remaining workers to get the average number of jobs each remaining worker should be responsible for, and we provision the queues accordingly, only to the IO-bound queues.
-
-```ruby
-module Workerholic
-  class WorkerBalancer
-    # ...
 
     def provision_queues(qs, average_jobs_count_per_worker, total_workers_count)
       qs.each do |q|
@@ -610,12 +757,20 @@ module Workerholic
 end
 ```
 
+Let's walk through this algorithm in the context of our example.
+- the average job count per worker is: `52,840 / 21 = 2,516.19`
+- we provision `Queue 1` with: `50,000 / 2,516.19 ~ 20`
+- we now have 24 workers assigned and 1 left to assign
+- then, we provision `Queue 2` with: `2,000 / 2,516.19 ~ 1`
+- we have now provisioned the queues with all 25 workers
+
 ![ASP_diagram_2](/images/ASP_diagram_2.png){:width="350"}
 
-Once an average is calculated, Workerholic divides each of its queue sizes by the average, get a workers count, and assign that many extra workers to their respective queues.
+Next, we will start looking at how, as BJP builders, we can help a user make better decision about his/her background job system.
 
 ### Reporting
-Let's move on to reports. It is an important feature because it allows a developer to gain insight into the state of overall jobs, the job types, jobs that failed, and how many jobs are completed over time, which the developer can use to make optimized decisions.
+
+Reporting is an important feature to implement when building a BJP. It allows developers to gain insight into the state of overall jobs, the job types, jobs that failed, and how many jobs are completed over time, which the developer can use to make optimized decisions.
 
 ![reporting_web_ui](/images/reporting_web_ui.png)
 
