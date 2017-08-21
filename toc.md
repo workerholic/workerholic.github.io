@@ -23,8 +23,7 @@ Before we get into how to build a Background Job Processor, let's take a quick r
 
 ##### Additional Features:
 * **configurability**: a BJP should be configurable in order to allow developers to tweak options so that the BJP can best fit their own application's requirements
-* **ease of use**: a BJP should be simple to use out-of-the-box and integrate with rails in the context of building it in Ruby
-
+* **ease of use**: a BJP should be simple to use out-of-the-box and, if written in Ruby, integrate with rails
 
 ## Introducing Workerholic: Overall Architecture
 
@@ -40,11 +39,11 @@ Above is a diagram of the overall architecture of our BJP, Workerholic.
 
 ## Building Workerholic
 
-The idea behind this project was to build a BJP from scratch and sharing our findings, what we learned and the challenges we faced. Next, we will dive into each feature that we deemed belonged into a BJP and how they are implemented in Workerholic.
+The idea behind this project was to build a BJP from scratch and sharing our findings, what we learned and the challenges we faced with the community. Next, we will dive into each feature that we deemed belonged to a BJP and how they are implemented in Workerholic.
 
 ### Reliability
 
-A common feature developers want out of a BJP is to be reliable. When performing a job, a network issue that prevents email sending could occur, or the job could be misconfigured. The main application and/or the BJP could crash. Regardless of the reason, we want to make sure that jobs are not lost.
+One of the most important features of any background job processor is reliability. When performing a job, a network issue that prevents email from being sent could occur, or the job could be misconfigured. Also, the main application and/or the BJP could crash. Regardless of the reason, we want to make sure that jobs are not lost.
 
 How can we make our BJP reliable?
 
@@ -52,11 +51,11 @@ How can we make our BJP reliable?
 
 As mentioned above, a question that needs to be answered is: how can we make sure our jobs don't get lost if the BJP or the main application crashes?
 To solve this problem we introduced a data store. This data store is used to persist the serialized jobs that have been enqueued by the main application.
-For Workerholic, we decided to use Redis because of its following features:
+For Workerholic, we decided to use Redis thanks to the following features:
 - convenient data structures for the problems we needed to solve (lists, sorted sets, hashes)
 - persistence to disk (every 5 minutes by default, configurable)
-- key:value data store, which grants easy access to the data
-- in memory data store, which allows for very efficient reads and writes
+- key:value data store, that provides convenient and easy to use API to access the data
+- in-memory data store with high performance for schema-less data (our use-case)
 
 ![Jobs Persistence Diagram](/images/jobs_persistence_redis.png)
 
