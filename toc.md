@@ -648,14 +648,19 @@ end
 We make an assumption that there would be 25 different job classes, and from there if we took one data point a day, that would give us 9000 fields which translates to 0.1MB, once an hour for 219,000 fields which translate to 1.7MB, and once per minute for 13M fields which translates to 100MB. From this, we realized that once/day is the only viable solution to be able transfer information over the wire quickly.
 
 ### Configurability
-Moving on to our first bonus feature: configurability. We wanted Workerholic to be versatile and satisfy the needs of the developer. Background job processors are powerful in what they accomplish. But all applications are different. Some may have a million jobs per day, while some maybe only have 10. In which case, we want our background job processor to have the option for the developer to change what they want to best suit their application's needs.
+Another common attribute of BJPs is the ability to configure and adjust them to the needs of the developer. Some web applications may have a million background jobs per day, while some maybe only have 10. In which case, it's safe to assume that the main configuration options should not be set once and for all by the BJP's developers - by not doing so we let our end-users take control of the most important parameters. In addition, this removes the guessing part on the BJP developer's end - now there's no need to think about every possible use-case.
+Common configuration options include grouping jobs by type (which means using multiple queues), enable parallel execution (especially in MRI) by spawning multiple processes, and be able to run on multiple Ruby implementations like JRuby or Rubinius. The challenge for Workerholic was how to make it configurable to satisfy the needs of most of our users (or potential users)
 
 ![configurability_CLI](/images/configurability_CLI.png)
 
-The configurability options we included are auto-balancing workers, an option to set the number of workers based on your application's needs, an option to load your application by supplying a path, an option to specify the number of processes you want to spin up, and the number of connections in the Redis connection pool. All those options are packaged up into a simple and intuitive API. And like all other command-line tools you've experienced, we have the `--help` flag to show you how to use these options.
+And how we tackled the configurability problem is by having multiple configuration options. We provide an option to auto-balance workers, an option to set the number of workers based on your application's needs, an option to load your application by supplying a path, an option to specify the number of processes you want to spin up, and the number of connections in the redis connection pool. All those options are packaged up into a simple and intuitive API. And like all other good command-line tools, we have the --help flag to show you how to use these options.
 
 ### Ease of Use
-Next bonus feature: ease of use. We wanted to make Workerholic easy to use and work right our of the box, as well as make it friendly with the popular frameworks in the Ruby ecosystem like Rails.
+A background job processor shoud be easy to setup and use. In the context of the Ruby ecosystem, this means having a way to automatically integrate with Rails and also have a default configuration that would work out of the box for most use cases.
+Rails integration is important not only because it's a good-to-have feature, but more because Rails has become a gold standard of Ruby web-development ecosystem. And since Workerholic's core functionality revolves around web-applications, it does not make much sense to build it without complete Rails integration.
+
+Like any other project, background job processors need to satisfy the needs of the majority of users. To achieve that, we needed to think about some sensible default configuration options. By doing so we allow users to focus on the needs of their web applications and not the tweaking of some arcane parameters.
+To make it work out of the box, we pre-defined default options so you don't need to supply anything we mentioned previously. By default, there will be 25 workers and the default number of Redis connections is the number of workers + 3, in this case, 28. This is the three additional connections we need for the job scheduler, worker balancer, and the memory tracker.
 
 #### Default Configuration
 ```ruby
@@ -676,7 +681,8 @@ module Workerholic
 end
 ```
 
-To make it work out of the box, Workerholic has default options set up already so you don't need to supply any of the options we mentioned previously. Our default is 25 workers, and the default number of Redis connections is the number of workers + 3, in this case, 28. This is the three additional connections we need for the job scheduler, worker balancer, and the memory trackers.
+Workerholic also has a default for 1 process. If `options[:processes]` is defined, we fork the specified number of processes. Otherwise, we just start the manager for one process.
+Since we don't make any assumptions about the types of jobs your web application might have, Workerholic will use evenly balancing workers algorithm.
 
 ```ruby
 module Workerholic
@@ -694,8 +700,6 @@ module Workerholic
   end
 end
 ```
-
-Workerholic also has a default for 1 process and evenly balancing workers. If `options[:processes]` is defined, we fork processes. Otherwise, we just start the manager for one process.
 
 #### Rails Integration
 A library built for web applications written in Ruby would be quite useless, or at best very unpopular, if it did not work with Rails.
@@ -740,10 +744,14 @@ module Workerholic
 end
 ```
 
-When workerholic starts, it'll load the app which load rails if it detects a specific file in Rails, and then we require our own active job adapter and load that in along with the rest of the rails application.
+When Workerholic starts, it loads the main application in order to have access to the job classes. This way it can perform the jobs on the processing side. In case a Rails app is detected it will load the Rails application codebase along with our own active job adapter.
 
 ### Testing
-As we developed our features, we needed to tests for our code.
+As we were developing our features, we needed to test our code.
+When building a background job processor, you need to test your code to make sure you do not introduce regressions by adding a feature or refactoring existing code.
+For Workerhollic, we decided to have a testing environment separated from our development environment by setting a Redis DB on a different port.
+
+For the testing environment, we set up Redis with a different port, so that it does not pollute our development Redis database.
 
 #### Testing Setup
 ```ruby
@@ -755,6 +763,9 @@ module Workerholic
   # ...
 end
 ```
+
+We also flush Redis before each run to ensure that it provides a valid state for every test case.
+
 ```ruby
 # spec/spec_helper.rb
 
@@ -769,10 +780,9 @@ RSpec.configure do |config|
 end
 ```
 
-To set up, we set up redis with a different port if the environment is testing, to separate it from our development environment. And also, we wanted to flush redis after each run to ensure that it is a valid state for every spec.
-
 #### Testing and Threads
-What we found along the way is testing threaded code is not trivial. We spent quite some time trying to figure this out, and this is because having multiple threads means that there is naturally asynchronously execution, meaning that we cannot expect the results immediately. Additionally, there is potential dependency on other threaded components.
+What we found along the way is testing threaded code is not trivial. We spent quite some time trying to figure this out, and this is because having multiple threads means that there is naturally asynchronous execution, meaning that we cannot expect the results immediately. Additionally, there is potential dependency on other threaded components, which add up to the overall complexity.
+
 ```ruby
 # spec/worker_spec.rb
 
@@ -788,6 +798,8 @@ it 'processes a job from a thread' do
   expect_during(1, 1) { WorkerJobTest.check }
 end
 ```
+
+In order to get around the asynchronous nature of threads, instead of asserting the final state of the system, we expect a certain state of the system to be mutated within a specified timeframe.
 
 ```ruby
 # spec/helper_methods.rb
@@ -806,18 +818,37 @@ def expect_during(duration_in_secs, target)
 end
 ```
 
-In order to get around the asynchronous nature of threads, instead of asserting the final state of the system, we expect a certain state of the system to be mutated within a specified timeframe.
-
 ### Benchmarking Workerholic
 #### Workerholic compared to the Gold Standard: Sidekiq
+
+Finally, we wanted to compare with Sidekiq one last time with each types of jobs individually. We're on par with Sidekiq, and only slightly faster than Sidekiq each time, and as we mentioned before this is because Sidekiq is a more mature and robust solution with a much larger feature-set.
+
 ![benchmark_workerholic_sidekiq](/images/benchmark_workerholic_sidekiq.png)
 
-Finally, we wanted to compare with Sidekiq one last time with each types of jobs individually. We're on par with Sidekiq, and only slightly faster than Sidekiq each time, and as we mentioned before this is because Sidekiq is a more mature and robust solution with many more features and handles more use cases.
+We also decided to compare the results of JRuby vs MRI. Because jRuby can run in parallel without the need of spinning up multiple processes, we found that execution of CPU blocking jobs was much faster in JRuby than in MRI, which is what we would expect.
 
 #### JRuby
 ![benchmark_jruby](/images/benchmark_jruby.png)
 
-We also decided to compare the results of jRuby vs MRI. Because jRuby can run in parallel without the need of spinning up multiple processes, we found that CPU blocking jobs were much faster in jRuby than in MRI, which is what we would expect.
-
 ## Conclusion
-N/A.
+
+It was a lot of fun to work on this project! Our goal was to share this knowledge with the community and we are confident our experience will be useful to other software engineers even if they don't have a plan to developer their own background job processor. After all it's usually a very interesting enterprise to understand how something works under the hood!
+
+As for us, we learned and expanded our knowledge about:
+
+* concurrency, and specifically threads
+* parallel execution using multiple processes and other Ruby interpreters
+* lower level details about threads and processes, such as their memory footprint
+* the impact on computational and memory resources when using multiple threads and multiple processes
+* using Redis as a key:value store and taking advantage of its awesome features such as native data structures, great performance and database snapshots
+* building a Ruby gem
+* providing users with an easy-to-use yet powerful CLI
+
+Since Workerholic is still in alpha, we do not recommend using it in a production environment. As for the next steps, we have quite a few in mind:
+
+* Automatically restart main Workerholic process in the event of failure (to improve reliability in case of emergency)
+* Establish more reliable and reactive jobs persistence methods (to lose even less jobs than we do at this moment if Redis crashes)
+* Identify other potential use-cases for Workerholic and adapt our codebase accordingly
+
+We hope you enjoyed reading about our journey as much as we enjoyed the journey itself!
+
