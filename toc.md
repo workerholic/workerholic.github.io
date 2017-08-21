@@ -661,8 +661,6 @@ Rails integration is important not only because it's a good-to-have feature, but
 
 Like any other project, background job processors need to satisfy the needs of the majority of users. To achieve that, we needed to think about some sensible default configuration options. By doing so we allow users to focus on the needs of their web applications and not the tweaking of some arcane parameters.
 To make it work out of the box, we pre-defined default options so you don't need to supply anything we mentioned previously. By default, there will be 25 workers and the default number of Redis connections is the number of workers + 3, in this case, 28. This is the three additional connections we need for the job scheduler, worker balancer, and the memory tracker.
-Workerholic also has a default for 1 process. If `options[:processes]` is defined, we fork the specified number of processes. Otherwise, we just start the manager for one process.
-Since we don't make any assumptions about the types of jobs your web application might have, Workerholic will use evenly balancing workers algorithm.
 
 #### Default Configuration
 ```ruby
@@ -682,6 +680,9 @@ module Workerholic
   # ...
 end
 ```
+
+Workerholic also has a default for 1 process. If `options[:processes]` is defined, we fork the specified number of processes. Otherwise, we just start the manager for one process.
+Since we don't make any assumptions about the types of jobs your web application might have, Workerholic will use evenly balancing workers algorithm.
 
 ```ruby
 module Workerholic
@@ -747,8 +748,10 @@ When Workerholic starts, it loads the main application in order to have access t
 
 ### Testing
 As we were developing our features, we needed to test our code.
+When building a background job processor, you need to test your code to make sure you do not introduce regressions by adding a feature or refactoring existing code.
+For Workerhollic, we decided to have a testing environment separated from our development environment by setting a Redis DB on a different port.
 
-For the testing environment, we set up Redis with a different port, so that it does not pollute our development Redis database. We also flush Redis after each run to ensure that it provides a valid state for every test case.
+For the testing environment, we set up Redis with a different port, so that it does not pollute our development Redis database.
 
 #### Testing Setup
 ```ruby
@@ -760,6 +763,8 @@ module Workerholic
   # ...
 end
 ```
+
+We also flush Redis before each run to ensure that it provides a valid state for every test case.
 
 ```ruby
 # spec/spec_helper.rb
@@ -794,6 +799,8 @@ it 'processes a job from a thread' do
 end
 ```
 
+In order to get around the asynchronous nature of threads, instead of asserting the final state of the system, we expect a certain state of the system to be mutated within a specified timeframe.
+
 ```ruby
 # spec/helper_methods.rb
 
@@ -811,22 +818,21 @@ def expect_during(duration_in_secs, target)
 end
 ```
 
-In order to get around the asynchronous nature of threads, instead of asserting the final state of the system, we expect a certain state of the system to be mutated within a specified timeframe.
-
 ### Benchmarking Workerholic
 #### Workerholic compared to the Gold Standard: Sidekiq
-![benchmark_workerholic_sidekiq](/images/benchmark_workerholic_sidekiq.png)
 
 Finally, we wanted to compare with Sidekiq one last time with each types of jobs individually. We're on par with Sidekiq, and only slightly faster than Sidekiq each time, and as we mentioned before this is because Sidekiq is a more mature and robust solution with a much larger feature-set.
+
+![benchmark_workerholic_sidekiq](/images/benchmark_workerholic_sidekiq.png)
+
+We also decided to compare the results of JRuby vs MRI. Because jRuby can run in parallel without the need of spinning up multiple processes, we found that execution of CPU blocking jobs was much faster in JRuby than in MRI, which is what we would expect.
 
 #### JRuby
 ![benchmark_jruby](/images/benchmark_jruby.png)
 
-We also decided to compare the results of JRuby vs MRI. Because jRuby can run in parallel without the need of spinning up multiple processes, we found that execution of CPU blocking jobs was much faster in JRuby than in MRI, which is what we would expect.
-
 ## Conclusion
 
-It was a lot of fun to work on this project! Our goal was to share potentially useful knowledge with the community and to introduce background job processors to people unfamiliar with them. After all it's usually a very interesting enterprise to understand how something works under the hood!
+It was a lot of fun to work on this project! Our goal was to share this knowledge with the community and. We are confident our experience will be useful to other software engineers even if they don't have a plan to developer their own background job processor. After all it's usually a very interesting enterprise to understand how something works under the hood!
 
 As for us, we learned and expanded our knowledge about:
 
@@ -834,11 +840,11 @@ As for us, we learned and expanded our knowledge about:
 * parallel execution using multiple processes and other Ruby interpreters
 * lower level details about threads and processes, such as their memory footprint
 * the impact on computational and memory resources when using multiple threads and multiple processes
-* using Redis as a key:value store and taking advantage of its awesome features such as native data structures, great performance and snapshots
+* using Redis as a key:value store and taking advantage of its awesome features such as native data structures, great performance and database snapshots
 * building a Ruby gem
 * providing users with an easy-to-use yet powerful CLI
 
-While our first version works, we are far from done. There are still a handful of features we'd like to add in the near future. Some of these faeatures are:
+Since Workerholic is still in alpha, we do not recommend using it in a production environment. As for the next steps, we have quite a few in mind:
 
 * Automatically restart main Workerholic process in the event of failure (to improve reliability in case of emergency)
 * Establish more reliable and reactive jobs persistence methods (to lose even less jobs than we do at this moment if Redis crashes)
