@@ -832,7 +832,7 @@ We also decided to compare the results of JRuby vs MRI. Because jRuby can run in
 
 ## Conclusion
 
-It was a lot of fun to work on this project! Our goal was to share this knowledge with the community and. We are confident our experience will be useful to other software engineers even if they don't have a plan to developer their own background job processor. After all it's usually a very interesting enterprise to understand how something works under the hood!
+It was a lot of fun to work on this project! Our goal was to share this knowledge with the community and we are confident our experience will be useful to other software engineers even if they don't have a plan to developer their own background job processor. After all it's usually a very interesting enterprise to understand how something works under the hood!
 
 As for us, we learned and expanded our knowledge about:
 
