@@ -49,6 +49,9 @@ hr.small {
   border-color: inherit;
   border-radius: 3px;
 }
+
+/* custom */
+
 li {
   margin: 10px 0;
 }
@@ -58,6 +61,20 @@ li {
   min-width: 600px;
   margin-left: -100px;
 }
+
+.team-names {
+  margin: 0;
+  padding: 0;
+}
+
+.team-member-name {
+  box-sizing: padding-box;
+  display: inline-block;
+  text-align: center;
+  width: 32.5%;
+}
+
+/* end of custom */
 
 .main-content {
   padding-top: 80px;
