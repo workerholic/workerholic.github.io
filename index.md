@@ -11,13 +11,12 @@ In this post we will walk you through the proces of building a BJP from scratch 
 
 But first, let us introduce ouselves:
 
-[![antoine](img/antoine.jpeg){:width="240"}](https://antoineleclercq.github.io)
-[![konstantin](img/konstantin.jpeg){:width="240"}](http://minevskiy.com/)
-![timmy](img/timmy.png){:width="240"}
-
 <ul class="team-names">
   <li class="team-member-name">
     <a href="https://antoineleclercq.github.io">
+      <figure>
+        <img alt="Antoine Leclercq" src="img/antoine.jpeg">
+      </figure>
       <strong>Antoine Leclercq</strong>
       <br>
       Software Engineer
@@ -25,13 +24,19 @@ But first, let us introduce ouselves:
   </li>
   <li class="team-member-name">
     <a href="http://minevskiy.com/">
+      <figure>
+        <img alt="Konstantin Minevskiy" src="img/konstantin.jpeg">
+      </figure>
       <strong>Konstantin Minevskiy</strong>
       <br>
       Software Engineer
     </a>
   </li>
   <li class="team-member-name">
-    <a href="">
+    <a href="https://tim-lee92.github.io/">
+      <figure>
+        <img alt="Timmy Lee" src="img/timmy.png">
+      </figure>
       <strong>Timmy Lee</strong>
       <br>
       Software Engineer
@@ -39,7 +44,7 @@ But first, let us introduce ouselves:
   </li>
 </ul>
 
-We are three Software Engineers **looking for our next opportunity**. To learn more about us you can **click us**!
+**We are looking for our next opportunity**, so don't hesitate to **click us to get in touch**!
 
 First, here is a quick demo of **Workerholic in action**:
 
