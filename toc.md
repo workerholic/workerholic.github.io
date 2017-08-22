@@ -770,23 +770,37 @@ Next, we will start looking at how, as BJP builders, we can help a user make bet
 
 ### Reporting
 
-Reporting is an important feature to implement when building a BJP. It allows developers to gain insight into the state of overall jobs, the job types, jobs that failed, and how many jobs are completed over time, which the developer can use to make optimized decisions.
+Reporting is an important feature to implement when building a BJP. It allows developers to gain insight into the state of overall jobs, the job types, jobs that failed, and how many jobs are completed over time, which the developer can use to make optimized decisions about their background job system.
+
+A sneak peak into the overview page of our Web UI:
 
 ![reporting_web_ui](/images/reporting_web_ui.png)
 
-Above is what our web UI looks like. This tracks real-time data, polling every 10 seconds.
-
 #### Real-time Statistics
 ##### What data?
+
+We decided to have Workerholic show our users aggregate data for finished jobs, queued jobs, scheduled jobs, failed jobs, current number of queues, and the memory footprint over time, as well as the breakdown of jobs for each class.
+
+All this data is updated every 10 seconds, using AJAX on the front-end to query our internal API for the data.
+
 ![reporting_realtime_jobs_per_s](/images/reporting_realtime_jobs_per_s.png)
 
 ![reporting_realtime_memory](/images/reporting_realtime_memory.png)
 
 ![reporting_real_time_queues](/images/reporting_real_time_queues.png)
 
-We decided to have Workerholic show our users aggregate data for finished jobs, queued jobs, scheduled jobs, failed jobs, current number of queues, and the memory footprint over time, as well as the breakdown of jobs from each class. All this data is updated every 10 seconds, using AJAX on the front-end to query our internal API for the data.
+Next, let's look into how we store this data.
 
 ##### How to store the data?
+
+We decided to use Redis because for the following reasons:
+- avoid using a new dependency
+- very efficient reads and writes (in-memory store)
+- automatic persistence to disk
+- use of Redis Data Structure: Sorted Set, for easy retrieval by using a timestamp related to the job execution or completion as a score
+
+Here is how we save our jobs to redis for statistical purposes:
+
 ```ruby
 module Workerholic
   class StatsStorage
@@ -805,42 +819,32 @@ module Workerholic
 end
 ```
 
-Now we have what data we wanted to track and store. Next we needed to ask how we should store our data? We decided to use Redis because there's no need for a new dependency, very efficient writes and reads (in-memory store), automatic persistence to disk, and have the tools available to store serialized jobs, like using a sorted set.
+We add serialized jobs to the `workerholic:stats` sorted sets in redis with the `completed_at` timestamp as a score. This way when we want to retrieve jobs for the last 10 seconds we simply have to get all the jobs with a score between the current timestamp and the timestamp from 10 seconds ago.
 
 ##### How much data?
-once we had a foundation for live data, we should think about how much data we should store. Initially, we decided we do not need to store live data, and to just poll new data every 10 seconds. This posed a problem though once we introduced graphs into the web UI; just polling for new data and throwing away stale data was no longer an option. A quick-fix for this was to just store data on the front-end for a certain number of data points to create the graph. This worked, but only if the user stayed on the page. If the user navigated away from the page. The data would've been lost. Instead, we looked at Redis to store this data, up to 1000 seconds, for a total of 100 data points. Currently, our graphs only show up to 240 seconds, so this many data points is unnecessary, but it may become necessary if we decided to cover more time with our graphs.
+
+Initially, we decided not to store live data and to just poll new data every 10 seconds. Once we introduced graphs into the web UI just polling for new data and throwing away stale data was no longer an option.
+
+At first, we decided to store data on the front-end for a certain number of data points so we could generate graphs. This worked, but only if the user stayed on the page. If the user navigated away from the page, the data be lost. Instead, we looked at Redis to store this data, up to 1,000 seconds, so we could have a total of 100 data points.
+
+Note that we also do some cleanup and remove the jobs that exceed this 1,000 seconds time range from our `workerholic:stats` sorted sets.
+
+After solving the problem for live data we decided to introduce historical data so that uses could have a broader view of their completed/failed jobs.
 
 #### Historical Statistics
-Live data, check! Next, we want to display historical, and first we had to think about what type of data to store?
-
 ##### What data?
-![reporting_historical_charts](/images/reporting_historical_charts.png)
 
-Since historical data is looking into the past, for now we decided that we'll just store aggregated data of completed and failed jobs, as well as the breakdown for each class, up to 365 days.
+We decided to display data for completed and failed jobs, as well as the breakdown for each class, up to 365 days. This way users would have a broad overview of their background jobs state over time.
+
+![reporting_historical_charts](/images/reporting_historical_charts.png)
 
 ##### How to store the data?
 ###### First Iteration
-```ruby
-module Workerholic
-  class Storage
-    # ...
 
-    def self.save_job(category, job)
-      job_hash = job.to_hash
-      serialized_job_stats = JobSerializer.serialize(job_hash)
+First of all, we decided to do store some aggregated data instead of serialized jobs, this way it would take much less space in Redis.
 
-      namespace = "workerholic:stats:#{category}:#{job.klass}"
-      storage.add_to_set(namespace, job.statistics.completed_at, serialized_job_stats)
-    end
+In our first iteration, we used a sorted set using the first timestamp of the day as a score. This approach would make it easy to retrieve a specific data range from Redis.
 
-    # ...
-  end
-end
-```
-
-In our first iteration, we used a sorted set using the beginning of the day as a timestamp to use as scores, which would be very easy to retrieve from Redis - using a range of scores to display data for 7 or 30 days for example. However, we ran into concurrency issues because we have three ways to update aggregated data: getting the count, removing the count, and incrementing the count.
-
-###### Second Iteration
 ```ruby
 module Workerholic
   class Storage
@@ -854,6 +858,14 @@ module Workerholic
   end
 end
 ```
+
+In the code above the data range would be indicated by having the earliest timestamp of the data range as the `minscore` and the latest timestamp as the `maxscore`.
+
+However, we ran into concurrency issues because we had to perform 3 separate operations, for which we could not guarantee the atomicity: getting the count of jobs from Redis, removing the count from Redis, incrementing the count in our code and pushing the count back in Redis.
+
+###### Second Iteration
+
+In our second iteration, we decided to use a hash, with the timestamp as the field key and the count of jobs as the field value, instead of a sorted set. This way we pushed the computation logic down to the Redis by using its convenient command for incrementing a hash field value:
 
 ```ruby
 module Workerholic
@@ -869,30 +881,42 @@ module Workerholic
 end
 ```
 
-In our second iteration, we decided to use a hash instead. Same as before, using the beginning of the day timestamps as hash fields, and this way we push the computation logic down to the Redis level when we retrieve our data. Redis also has a very nice convenient hash method for incrementing fields.
+By doing the above we avoid concurrency issues by relying on Redis, which uses a write lock when executing the `HINCRBY` command.
+Once we have figured out how we wanted to store the data, we need to think about how many data points to store?
 
 ##### How much data?
-Once we have figured out how we wanted to store the data, we need to think about how many data points to store? The goal for us here is to be able to store data for up to a year.
+
+We decided to store data for up to 365 days.
+
+As a starting point we decided to look at how much space would a hash field, with a timestamp as a field key and a count of jobs as a value field, take. To this effect we wrote a short Ruby script that would set 10,000 hash fields in Redis. Then we use `redis-cli` and the `debug object` command in order to get the size of the whole hash.
 
 ```ruby
 require 'redis'
 
 redis = Redis.new
 
-100_000.times do |i|
+10_000.times do |i|
   redis.hset('my_key', Time.now.to_i + i, 1000)
 end
 ```
 
 ![reporting_historical_redis_size](/images/reporting_historical_redis_size.png)
 
- We set 10,000 and 100,000 hash fields in Redis to get an average of how much memory each field would take, which comes to an average of 8 bytes. We went through iterations of how much memory each would take:
+As you can see above we also ran the script for 100,000 hash fields so we can check if the size is consistent. And it is since we have a difference of 10x.
+
+To get the average of how much memory each field would take we need to divide the whole size of the hash by 100,000, which gives us an average of 8 bytes per hash field.
+Next, we computed some estimations:
 
 ![reporting_historical_estimations](/images/reporting_historical_estimations.png)
 
-We make an assumption that there would be 25 different job classes, and from there if we took one data point a day, that would give us 9000 fields which translates to 0.1MB, once an hour for 219,000 fields which translate to 1.7MB, and once per minute for 13M fields which translates to 100MB. From this, we realized that once/day is the only viable solution to be able transfer information over the wire quickly.
+We make an assumption that there would be 25 different job classes, and from there if we took one data point a day, that would give us 9000 fields which translates to 0.1MB. One data point per hour would give us for 219,000 fields which translates to 1.7MB. And one data point per minute would give us 13M fields which translates to 100MB.
+
+From this, we realized that one data point per day is the only viable solution to be able transfer information over the wire quickly when a user requests 365 days of data.
+
+In the next section we will start diving into the additional features that can be added to a BJP and that we actually implemented for Workerholic.
 
 ### Configurability
+
 Another common attribute of BJPs is the ability to configure and adjust them to the needs of the developer. Some web applications may have a million background jobs per day, while some maybe only have 10. In which case, it's safe to assume that the main configuration options should not be set once and for all by the BJP's developers - by not doing so we let our end-users take control of the most important parameters. In addition, this removes the guessing part on the BJP developer's end - now there's no need to think about every possible use-case.
 Common configuration options include grouping jobs by type (which means using multiple queues), enable parallel execution (especially in MRI) by spawning multiple processes, and be able to run on multiple Ruby implementations like JRuby or Rubinius. The challenge for Workerholic was how to make it configurable to satisfy the needs of most of our users (or potential users)
 
