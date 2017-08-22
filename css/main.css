@@ -53,6 +53,14 @@ li {
   margin: 10px 0;
 }
 
+#demo {
+  max-width: 1200px;
+  min-width: 600px;
+  max-height: 800px;
+  min-height: 400px;
+  margin-left: -200px;
+}
+
 .main-content {
   padding-top: 80px;
 }
