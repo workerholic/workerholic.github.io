@@ -1,5 +1,6 @@
 ## Introduction
-Why would you need to use a Background Job Processor (BJP)?
+
+Why use a Background Job Processor (BJP)?
 
 Let's look at a simple example of a user, identified as the `Client`, registering on a web site `awesome-website.com`. When users register on `awesome-website.com` they receive an email in order for them to verify their email address. What does this mean on the Web Server side?
 In the case of `awesome-website.com`, sending an email requires to send an HTTP request to an Email Service Provider (ESP) and wait for a response, depending on the latency of the ESP and the geographical distance between the Web Server and the ESP's server this could take from 2ms to 500ms or more. Let's assume the worst and consider each trip over the wire to the ESP takes 500ms. This means that if the Web Server's usual response time for this kind of HTTP request is 150ms then it will take 650ms total to send a response back to the client.
