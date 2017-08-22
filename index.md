@@ -1,7 +1,9 @@
 ---
 layout: page
-categories: ruby bjp background-job-processor
+title: Workerholic
+subtitle: How we built a Background Job Processor from scratch
+use-site-title: true
 ---
 
-{% include toc.html %}
 {% include_relative toc.md %}
+{% include_relative story.md %}
