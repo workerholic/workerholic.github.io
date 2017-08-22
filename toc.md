@@ -244,7 +244,7 @@ Concurrency is employed to design atomic units of work than can be executed at t
 
 In Ruby we can enable **Concurrency** by using **Threads**. A Ruby program always has a main thread of execution in which the usual code is executed. It is possible for this main thread to use the `Thread` API, provided by the Ruby core library, in order to spawn new threads of execution. A thread of execution executes independently from other threads of execution.
 
-Threads rely on what is called the **OS scheduler** in order to receive some computational resources from a CPU core. This is how they are able to execute the code they contain. The OS Scheduler is in charge of fairly attributing some computational resources to each thread and process by scheduling CPU cores to work on each on of them for a specific duration.
+Threads rely on what is called the **OS scheduler** in order to receive some computational resources from a CPU core. This is how they are able to execute the code they contain. The OS Scheduler is in charge of fairly attributing some computational resources to each thread and process by scheduling them on CPU cores for a specific duration.
 
 ![efficiency_OS_scheduler_threads](/images/efficiency_OS_scheduler_threads.png){:width="400"}
 
@@ -254,7 +254,7 @@ In MRI (Matz Ruby Interpreter, aka CRuby, the main Ruby implementation that we a
 
 With this limitation it does not seem to make a difference to add threads. We will just be executing jobs concurrently but it will take the same amount of time. The OS scheduler will allocate the computational resources from a single CPU core between the Threads sequentially, by invoking Conext Switching, but not in parallel.
 
-Our jobs are IO bound because they require a trip over the wire: sending a request to the Email Service Provider API and receiving a response once the email has been sent. This trip over the wire takes 50 ms on average. Having an IO bound job executing inside a thread means that this thread will be put in a sleeping state for 50ms. During this time the OS scheduler can allocate computational resources from a CPU core to the 4 other threads which will also be put in a sleeping state for 50 ms during the trip over the wire. This way we will have 5 workers sleeping at the same time and all waiting on IO to keep executing. Once a worker receives a response it will keep executing once the OS scheduler gives it some CPU time.
+Our jobs are IO bound because they require a trip over the wire: sending a request to the Email Service Provider API and receiving a response once the email has been sent. This trip over the wire takes 50 ms on average. Having an IO bound job executing inside a thread means that this thread will be put in a sleeping state for 50ms. During this time the OS scheduler can schedule the 4 other threads to a CPU core which will also be put in a sleeping state for 50 ms during the trip over the wire. This way we will have 5 workers sleeping at the same time and all waiting on IO to keep executing. Once a worker receives a response it will keep executing once the OS scheduler schedules it again on a CPU core.
 
 The point here is that we cannot have threads running in parallel, but if the job being executed inside a thread has to wait on IO for 99.99% of the total execution job time then multiple threads can spend almost all of this time waiting simultaneously, in parallel, instead of having a single thread having to wait on all jobs sequentially.
 
@@ -430,9 +430,9 @@ The challenge for us here is to even the enqueuing throughput and the dequeuing 
 
 ##### Parallelism & Processes
 
-As mentioned earlier, image processing jobs are CPU-bound, because they require CPU time only, no/insignificant IO time during which the thread performing the job can be put into a **sleep**ing state. Meaning, we cannot take advantage of multithreading for this type of jobs in the context of MRI.
-Since our machine has **multiple cores**, we can take advantage of this fact by running **multiple processes in parallel**.
-When the CPU has multiple cores, the OS scheduler can allocate some computational resources from the different cores to different processes.
+As mentioned earlier, image processing jobs are CPU-bound because the main computational resource they require is CPU time - there is no IO downtime during which it can be put into a **sleep**ing state. That is why we cannot take advantage of multithreading for this type of jobs in the context of MRI.
+Since our machine has **multiple CPU cores**, we can take advantage of this fact by running **multiple processes in parallel**.
+When the CPU has multiple cores, the OS scheduler is able to schedule different processes to different CPU cores, effectively enabling parallelism.
 The CPU cores run in parallel, hence, if we have two CPU cores we can have computational resources allocated to 2 different processes at the same time, effectively allowing them to run in parallel.
 Since we have 4 cores, we can spin up 4 processes and reduce the enqueuing:processing ratio from 1:40 to 1:10.
 
@@ -442,17 +442,15 @@ We benchmarked how Workerholic performed when we ran 2 processes vs. 1 process:
 
 ![benchmark_2_processes](/images/benchmark_2_processes.png)
 
-We can see that having more processes mean increase in performance. In each of these cases, time is divided by two. This is not a 100% guarantee, some factors need to be taken into account, such as:
+We can see that having more processes translates into increased performance. In each of these cases, time is divided by two. This is not a 100% guarantee, some factors need to be taken into account, such as:
 - other processes running and requiring some computational resources, effectively reducing the CPU time scheduled for our processes
 - relying on the OS scheduler for optimizing the sharing of computational resources, effectively introducing randomness from our point of view
-
-This is why in the chart above you can see CPU blocking jobs execution time divided by more than two. This is because the machine that ran this benchmark had two CPU cores, the first one was used at 30% to run the OS along with other processes, while the other was used at 1-2%. With two processes the OS Sceduler was able to schedule 70% of the first CPU core's time plus 98-99% of the second CPU core's time instead of only 70% of the first CPU core's time.
 
 In the next section we will see how we introduced parallelism specifically for our BJP Workerholic.
 
 ##### Parallelism in Workerholic
 
-The diagram below shows how Workerholic uses multiple processes if we had the CPU cores available to do so. The OS scheduler schedules the each CPU core's time to each process, each process has its own worker threads which can poll jobs from Redis and work on them. So if we have four CPU cores we can have computational resources allocated to four different processes potentially at the same time, effectively allowing them to run in parallel.
+The diagram below shows how Workerholic uses multiple processes if we had the CPU cores available to do so. The OS scheduler pushes / evicts processes from the CPU and each process has its own worker threads that can poll jobs from Redis and work on them. So if we have four CPU cores we can have computational resources allocated to four different processes potentially at the same time, effectively allowing them to run in parallel.
 
 ![parallelism_workeholic_diagram](/images/parallelism_workeholic_diagram.png)
 
@@ -492,21 +490,21 @@ In the next section we will look at how forking children processes impacts the c
 
 ##### Processes and Memory consumption
 
-A Ruby process can fork multiple children processes. The memory model for a process is as follows:
+A A Ruby process can fork multiple child processes. The memory model for a process is as follows:
 
 ![efficiency_processes_memory_design](/images/efficiency_processes_memory_design.png)
 
-Each process has its own address space, stack, and heap. When a process is forked in Ruby, a child process is created, which will get its own stack. As for the heap, depending on the OS the copy-on-write mechanism is employed:
-- children processes start by referencing the parent's process heap, effectively sharing the same resources with the parent process
+Each process has its own address space, stack, and heap. When a process is forked, a child process is created with its own stack. As for the heap, depending on the OS the copy-on-write mechanism might be employed:
+- child processes start by referencing the parent's process heap, effectively sharing the same resources with the parent process
 - as modifications to the resources on the heap occur, children processes write the mutated resources to their own heap, leaving the parent's heap unmodified
 
 We benchmarked the memory consumption of having one process and two processes by using a Rails application. Having one process takes up 125MB of memory, but having two processes don't take twice as much memory. This is the copy-on-write mechanism at work.
 
 ![memory_usage_processes](/images/memory_usage_processes.png)
 
-Let's assume the Rails application in our scenario is a pretty big Rails app and takes about 400MB. By forking 4 processes Workerholic, will at most take 1.6GB of memory out of 4GB, meaning, forking 4 processes is a viable option.
+Let's assume the Rails application in our scenario is a pretty big Rails app and takes about 400MB in memory. By forking 4 processes, Workerholic will at most take 1.6GB out of 4GB of RAM, meaning forking 4 processes is a viable option.
 
-As we mentioned previously, using our four CPU cores, we can fork to a total of four processes and reduce our image processing enqueuing:processing ratio down to 1:10. But that is still not good enough. After an extended period of time, we will eventually end up with a backlog of jobs, effectively implicating a huge latency and memory footprint. What else can we do to even out or enqueuing:processing ratio?
+As we mentioned previously, using our four CPU cores, we can fork a total of four processes and reduce our image processing enqueuing:processing ratio down to 1:10. But that is still not good enough. After an extended period of time, we will eventually end up with a backlog of jobs, effectively imposing a huge latency and memory footprint. What else can we do to even out or enqueuing:processing ratio?
 
 ### Scalability
 
@@ -518,7 +516,7 @@ We are currently maximizing the use of available resources by using concurrency 
 
 ##### Scaling vertically
 
-Scaling vertically means increasing the amount of available resources by getting a better machine. We currently have 4 CPU cores and 4GB or RAM. By looking at [Digital Ocean](https://www.digitalocean.com/pricing/#droplet), their best machine is 20 CPU cores and 64GB or RAM. If we were to use one these machine instead of the current configuration we have we would be able to bring our enqueuing:processing ratio down to 1:2. The memory footprint for 20 processes will be of 8GB *(20 * 400MB)* at worst, which is acceptable since this machine would have 64GB of RAM.
+Scaling vertically means increasing the amount of available resources by getting a better machine. We currently have 4 CPU cores and 4GB or RAM. By looking at [Digital Ocean](https://www.digitalocean.com/pricing/#droplet), their best machine is 20 CPU cores and 64GB or RAM.  If we were to use one of these machine instead of what we have right now, we would be able to bring our enqueuing:processing ratio down to 1:2. The memory footprint for 20 processes will be of 8GB *(20 * 400MB)* at worst, which is acceptable since this machine would have 64GB of RAM.
 
 A 1:2 ratio will still generate a backlog of jobs, which is why we also need to scale horizontally.
 
@@ -526,18 +524,18 @@ A 1:2 ratio will still generate a backlog of jobs, which is why we also need to 
 
 Scaling horizontally means increasing the amount of available resources by getting multiple machines. This gives us two options:
 - keeping our original configuration and get multiple identical machines. In our case, we would need 10 machines since we have a 1:10 (enqueuing:processing) ratio.
-- scale vertically first by getting a better machine, such as the one described in the previous section (20 cores, 64GB or RAM) and get multiple identical machins. In our case, we would need 2 machines since we have a 1:2 (enqueuing:processing) ratio.
+- scale vertically first by getting a better machine, such as the one described in the previous section (20 cores, 64GB or RAM) and get multiple identical machines. In our case, we would need 2 machines since we have a 1:2 (enqueuing:processing) ratio.
 
 Whichever option is chosen, they will both even out the enqueuing:processing ratio, which was our goal from the beginning.
 By choosing any of these two options we need to consider the fact that, for this to be possible, we need to have BJP that is scalable. In the next section, we will look at how this is done for Workerholic.
 
 #### Workerholic: a scalable BJP
 
-Workerholic is scalable because we use Redis as a central data store for the jobs. Workerholic will still need access to the source code of the main application, but won't be tied to a specific instance of the main application. Meaning, there can be a cluster of web servers or a single web server and Workerholic will still work the same. It is only concerned with what is enqueued in Redis, not how many main application instances are running. Workerholic is also scalable because its workers only don't have a state except for the queue they're polling from, which is centralized with Redis and dynamically updated every second on the Wokerholic's side.
+Workerholic is scalable because we use Redis as a central data store for the jobs. Workerholic will still need access to the source code of the main application, but won't be tied to a specific instance of the main application. Meaning, there can be a cluster of web servers or a single web server and Workerholic will still work the same. It is only concerned with what is enqueued in Redis, not how many main application instances are running. Workerholic is also scalable because its workers don't have a state except for the queue they're polling from, which is synchronized with Redis and dynamically updated every second on the Wokerholic's side.
 
 ![scalibility_workerholic](/images/scalibility_workerholic.png)
 
-Workerholic is reliable, it uses concurrency, parallelism to be efficient and it is a scalable BJP. How does it compare to a gold standard like Sidekiq? What other optimizations can we introduce?
+Workerholic is reliable, scalable and employs concurrency and parallelism to be efficient. How does it compare to a gold standard like Sidekiq? What other optimizations can we introduce?
 
 ### Optimizations
 
@@ -545,13 +543,13 @@ When building a BJP it is important to see how the current implementation compar
 
 #### Serialization
 
-On our first iteration, we found that there was a great difference between Workerholic and Sidekiq; ours took much longer both on the enqueuing side and the processing side:
+On our first iteration, we found that there was a great difference between Workerholic and Sidekiq; the former was much slower on both the enqueuing and the processing sides:
 
 ![optimizations_serialization_benchmark_yaml](/images/optimizations_serialization_benchmark_yaml.png)
 
 What was our bottleneck? Sidekiq uses a similar model to Workerholic: concurrency via the use of threads. The difference seemed too big, especially since Workerholic should be a lighter BJP with less features and edge cases covered.
 
-The first thing we noticed is that both the enqueuing side and processing side were slower. This gave us a major insight into realizing it was a bottleneck present on both end of the spectrum. We started wondering if maybe there could be a problem performance hit because of serialization. Indeed, we were using YAML while Sidekiq is using JSON.
+The first thing we noticed is that both the enqueuing side and processing side were slower. This gave us a major insight into realizing it was a bottleneck present on both end of the spectrum. We started wondering if the way we serialize our data may be the bottleneck. Indeed, we were using YAML while Sidekiq was using JSON.
 So we decided to switch to a JSON serialization. The following YAML serialization:
 
 ```ruby
