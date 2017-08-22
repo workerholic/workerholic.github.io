@@ -500,7 +500,7 @@ end
 
 We fork processes if the user specified the option when starting Workerholic. Then we fork the number of processes specified minus one since the main process will serve as one of these processes, effectively having 1 parent process and N - 1 children processes. We make sure to store the processes ids `pid`, inside a `PIDS` constant for future reference. In each of these children processes we start the manager, which starts all the workers and the other components such as the Job Scheduler. Once these children processes are started we start the manager in the parent process.
 
-In the next section we will look at how forking children processes impacts the consumption of the available memory.
+In the next section we will look at how forking child processes impacts memory usage.
 
 #### Processes and Memory consumption
 
@@ -615,7 +615,7 @@ After switching to JSON we benchmarked Workerholic against Sidekiq one more time
 
 ![optimizations_serialization_benchmark_json](/img/optimizations_serialization_benchmark_json.png)
 
-We were able to improve our enqueuing duration by 70% and our processing duration by 55% compared to our YAML iteration!
+We were able to reduce our enqueuing time by 70% and processing time by 55% compared to our previous YAML iteration!
 Here the point is not to show that we're slightly faster than Sidekiq, because we probably aren't: we were benchmarking without logging out every single enqueued job and every single processed job, which slow down the performance a bit. But we are on par with Sidekiq's performance which is a great victory.
 
 We have improved our efficiency by changing our serialization strategy. Can we optimize Workerholic even further?
@@ -630,13 +630,13 @@ As shown in the above diagram, Sidekiq's random polling algorithm took 242 secon
 
 #### Evenly balanced workers
 
-The purpose of this algorithm is to attribute a fair amount of workers between each queue by dynamically assigning a queue to a worker, every second. This way if a queue is empty the workers that were polling from it can be evenly redistributed between the non-empty queues.
+The purpose of this algorithm is to fairly distribute workers between each queue by dynamically assigning a queue to a worker, every second. This way if a queue is empty the workers that were polling from it can be evenly redistributed between the non-empty queues.
 
 Once we had a working implementation of the algorithm we decided to benchmark with the same scenario as we did for Sidekiq:
 
 ![efficiency_algorithms_benchmark](/img/efficiency_algorithms_benchmark_2.png){:width="400"}
 
-The algorithm performed poorly compared to Sidekiq's random polling. It took 357 seconds to perform the same amount and type of jobs with our algorithm. This is because in the context of having CPU-blocking jobs, having multiple workers would not make a difference as compared to having one woker (when using MRI).
+The algorithm performed poorly compared to Sidekiq's random polling. It took 357 seconds to perform the same amount and type of jobs with our algorithm. This is because in the context of CPU-blocking jobs having multiple workers would not make a difference as compared to having one worker (when using MRI).
 
 How can Workerholic perform better?
 
@@ -644,7 +644,7 @@ How can Workerholic perform better?
 
 ##### Iteration 1
 
-We decided to use a different, custom, algorithm: Adaptive and Successive Provisioning of workers based on queue load. This would allow workers to switch faster to IO queues in case there are any because CPU-bound are usually executed a faster rate than IO blocking jobs. Once again, we benchmarked using the same amount and type of jobs:
+We decided to create a different algorithm: we called it **Adaptive and Successive Provisioning (ASP)** of workers based on queue load. This would allow workers to switch faster to IO queues in case there are any because CPU-bound jobs are usually executed at a faster rate than IO blocking jobs. Once again we benchmarked using the same amount and type of jobs:
 
 ![efficiency_algorithms_benchmark](/img/efficiency_algorithms_benchmark_3.png){:width="400"}
 
@@ -652,13 +652,13 @@ The jobs were executed faster than our evenly-balancing algorithm but still much
 
 ##### Iteration 2
 
-We decided that we needed a way to identify queues containing IO-bound from CPU-bound jobs. Our first iteration of ASP was an improvement, but in the case of having some queues containing CPU-bound jobs, we were still potentially assigning more than workers.
+We decided that we needed a way to distinguish queues containing IO-bound and CPU-bound jobs. Our first iteration of ASP was an improvement, but in the case of having queues containing CPU-bound jobs, we were still potentially assigning more than one worker.
 
-The way we recognize which queues contain IO-bound jobs is by asking the user to flag the queues by adding `-io` at the end of the queue name. This way when we use our ASP algorithm we make sure to only assign only one worker per queue containing CPU-bound jobs and auto-balance the rest of the queues, which would be flagged as queues containing IO-bound jobs. As you may recall, having more workers on CPU-blocking jobs makes no difference, which is a waste of Workerholic's resources.
+The way we recognize which queues contain IO-bound jobs is by asking the user to flag the queues by appending `-io` to the queue name. This way when we use our ASP algorithm we make sure to only assign one worker per queue containing CPU-bound jobs and auto-balance the rest of the queues, which would be flagged as queues containing IO-bound jobs. As you may recall, having more workers on CPU-blocking jobs makes no difference, which is a waste of Workerholic's resources.
 
 ![efficiency_algorithms_benchmark](/img/efficiency_algorithms_benchmark_3.png){:width="400"}
 
-As shown in the above diagram, the performance for this algorithm is much closer to Sidekiq's random polling and is seems to be performing better in this example scenario. Which is another great victory for us since we wanted to show how to build a BJP that would perform closely to the leaders in the field.
+As shown in the above diagram, the performance for this algorithm is much closer to Sidekiq's random polling and it is performing better in the example scenario. Which is another great victory for us since we wanted to show how to build a BJP that would perform closely to the leaders in the field.
 
 *Note: We chose Sidekiq to benchmark against because it is the leader of background job processing in Ruby and we thought that is the bar we should aim for. These results should not be taken as a way to expose Workerholic being faster than Sidekiq. Workerholic is in its alpha stage and should not be used in production environments, this is first of all a project meant to be shared with the community and used to expose the different features and steps needed in order to build a BJP.*
 
@@ -787,7 +787,7 @@ Next, we will start looking at how, as BJP builders, we can help a user make bet
 
 ## Reporting
 
-Reporting is an important feature to implement when building a BJP. It allows developers to gain insight into the state of overall jobs, the job types, jobs that failed, and how many jobs are completed over time, which the developer can use to make optimized decisions about their background job system.
+Reporting is an important feature to implement when building a BJP. It allows developers to gain insight into the overall state of jobs, the job types, jobs that failed, and how many jobs are completed over time, which the developer can use to make better decisions about adjustments needed to the background job system.
 
 A sneak peak into the overview page of our Web UI:
 
@@ -811,12 +811,12 @@ Next, let's look into how we store this data.
 
 #### How to store the data?
 
-We decided to use Redis because for the following reasons:
+We decided to use Redis for the following reasons:
 
 - avoid using a new dependency
 - very efficient reads and writes (in-memory store)
 - automatic persistence to disk
-- use of Redis Data Structure: Sorted Set, for easy retrieval by using a timestamp related to the job execution or completion as a score
+- use of convenient Redis data type: Sorted Set, for easy retrieval by using a timestamp related to the job execution or completion as a score
 
 Here is how we save our jobs to redis for statistical purposes:
 
@@ -838,17 +838,17 @@ module Workerholic
 end
 ```
 
-We add serialized jobs to the `workerholic:stats` sorted sets in redis with the `completed_at` timestamp as a score. This way when we want to retrieve jobs for the last 10 seconds we simply have to get all the jobs with a score between the current timestamp and the timestamp from 10 seconds ago.
+We add serialized jobs to the `workerholic:stats` sorted sets in redis with the `completed_at` timestamp as a score. This way when we want to retrieve jobs for the last 10 seconds we simply have to get all the jobs with a score between the current timestamp and the timestamp 10 seconds ago.
 
 #### How much data?
 
 Initially, we decided not to store live data and to just poll new data every 10 seconds. Once we introduced graphs into the web UI just polling for new data and throwing away stale data was no longer an option.
 
-At first, we decided to store data on the front-end for a certain number of data points so we could generate graphs. This worked, but only if the user stayed on the page. If the user navigated away from the page, the data be lost. Instead, we looked at Redis to store this data, up to 1,000 seconds, so we could have a total of 100 data points.
+At first, we decided to store data on the front-end for a certain number of data points so we could generate graphs. This worked, but only if the user stayed on the page. If the user navigated away from the page,the data was lost. Instead, we decided to rely on Redis to store this data, up to 1,000 seconds, so we could have a total of 100 data points.
 
 Note that we also do some cleanup and remove the jobs that exceed this 1,000 seconds time range from our `workerholic:stats` sorted sets.
 
-After solving the problem for live data we decided to introduce historical data so that uses could have a broader view of their completed/failed jobs.
+After solving the problem for live data we decided to introduce historical data so that users could have a broader view at their completed/failed jobs.
 
 ### Historical Statistics
 
@@ -862,9 +862,9 @@ We decided to display data for completed and failed jobs, as well as the breakdo
 
 ##### First Iteration
 
-First of all, we decided to do store some aggregated data instead of serialized jobs, this way it would take much less space in Redis.
+First of all, we decided to store aggregated data instead of serialized jobs. This way it would take much less space in Redis.
 
-In our first iteration, we used a sorted set using the first timestamp of the day as a score. This approach would make it easy to retrieve a specific data range from Redis.
+In our first iteration, we used a sorted set with the first timestamp of the day as a score. This approach would make it easy to retrieve specific data range from Redis.
 
 ```ruby
 module Workerholic
@@ -880,7 +880,7 @@ module Workerholic
 end
 ```
 
-In the code above the data range would be indicated by having the earliest timestamp of the data range as the `minscore` and the latest timestamp as the `maxscore`.
+In the code above the date range would be delimited by having the earliest timestamp of the date range as the `minscore` and the latest timestamp as the `maxscore`.
 
 However, we ran into concurrency issues because we had to perform 3 separate operations, for which we could not guarantee the atomicity: getting the count of jobs from Redis, removing the count from Redis, incrementing the count in our code and pushing the count back in Redis.
 
@@ -903,13 +903,13 @@ end
 ```
 
 By doing the above we avoid concurrency issues by relying on Redis, which uses a write lock when executing the `HINCRBY` command.
-Once we have figured out how we wanted to store the data, we need to think about how many data points to store?
+Once we figured out how we wanted to store the data, we needed to think about how many data points to store.
 
 #### How much data?
 
 We decided to store data for up to 365 days.
 
-As a starting point we decided to look at how much space would a hash field, with a timestamp as a field key and a count of jobs as a value field, take. To this effect we wrote a short Ruby script that would set 10,000 hash fields in Redis. Then we use `redis-cli` and the `debug object` command in order to get the size of the whole hash.
+As a starting point we decided to look at how much space would a hash field, with a timestamp as a field key and a count of jobs as a value field. To this effect we wrote a short Ruby script that would set 10,000 hash fields in Redis. Then we use `redis-cli` and the `debug object` command in order to get the size of the whole hash.
 
 ```ruby
 require 'redis'
