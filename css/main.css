@@ -54,11 +54,9 @@ li {
 }
 
 #demo {
-  max-width: 1200px;
+  max-width: 1000px;
   min-width: 600px;
-  max-height: 800px;
-  min-height: 400px;
-  margin-left: -200px;
+  margin-left: -100px;
 }
 
 .main-content {
