@@ -656,7 +656,7 @@ We decided that we needed a way to distinguish queues containing IO-bound and CP
 
 The way we recognize which queues contain IO-bound jobs is by asking the user to flag the queues by appending `-io` to the queue name. This way when we use our ASP algorithm we make sure to only assign one worker per queue containing CPU-bound jobs and auto-balance the rest of the queues, which would be flagged as queues containing IO-bound jobs. As you may recall, having more workers on CPU-blocking jobs makes no difference, which is a waste of Workerholic's resources.
 
-![efficiency_algorithms_benchmark](/img/efficiency_algorithms_benchmark_3.png){:width="400"}
+![efficiency_algorithms_benchmark](/img/efficiency_algorithms_benchmark_4.png){:width="400"}
 
 As shown in the above diagram, the performance for this algorithm is much closer to Sidekiq's random polling and it is performing better in the example scenario. Which is another great victory for us since we wanted to show how to build a BJP that would perform closely to the leaders in the field.
 
