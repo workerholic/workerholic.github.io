@@ -62,16 +62,24 @@ li {
   margin-left: -100px;
 }
 
-.team-names {
+.team {
   margin: 0;
   padding: 0;
 }
 
-.team-member-name {
+.team-member {
   box-sizing: padding-box;
   display: inline-block;
   text-align: center;
   width: 32.5%;
+}
+
+@media only screen and (max-width: 624px) {
+  .team-member {
+    display: block;
+    margin: 10px auto;
+    font-size: 12px;
+  }
 }
 
 /* end of custom */
