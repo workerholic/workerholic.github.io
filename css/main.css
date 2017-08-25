@@ -76,9 +76,10 @@ li {
 
 @media only screen and (max-width: 624px) {
   .team-member {
+    width: 250px;
     display: block;
     margin: 10px auto;
-    font-size: 12px;
+    font-size: 14px;
   }
 }
 
