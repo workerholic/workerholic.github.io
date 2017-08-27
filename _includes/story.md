@@ -523,49 +523,52 @@ As we mentioned previously, using our four CPU cores, we can fork a total of fou
 
 ## Scalability
 
+{: .center}
 ![scalibility_image](/img/scalibility_image.png){:width="380" height="350"}
 
 ### Scaling in the context of our scenario
 
-We are currently maximizing the use of available resources by using concurrency and parallelism. In order to bring our enqueuing:processing down to a 1:1 ratio we need to scale either vertically or horizontally.
+We are currently maximizing the use of available resources by relying on concurrency and parallelism. In order to bring our enqueuing:processing ratio down to 1:1 we need to scale either vertically or horizontally.
 
 #### Scaling vertically
 
-Scaling vertically means increasing the amount of available resources by getting a better machine. We currently have 4 CPU cores and 4GB or RAM. By looking at [Digital Ocean](https://www.digitalocean.com/pricing/#droplet), their best machine is 20 CPU cores and 64GB or RAM.  If we were to use one of these machine instead of what we have right now, we would be able to bring our enqueuing:processing ratio down to 1:2. The memory footprint for 20 processes will be of 8GB *(20 * 400MB)* at worst, which is acceptable since this machine would have 64GB of RAM.
+Scaling vertically means increasing the amount of available resources by getting a better machine or adding more hardware resources to the existing one. We currently have 4 CPU cores and 4GB or RAM. By looking at the [Digital Ocean](https://www.digitalocean.com/pricing/#droplet) offerings, the best machine has 20 CPU cores and 64GB of RAM. If we were to use one of these machine instead of what we have right now, we would be able to bring our enqueuing:processing ratio down to 1:2. The memory footprint for 20 processes will be around 8GB *(20 * 400MB)* at worst, which is acceptable since this machine would have 64GB of RAM.
 
-A 1:2 ratio will still generate a backlog of jobs, which is why we also need to scale horizontally.
+A 1:2 ratio will still generate a backlog of jobs, which is why in this particular case we also need to scale horizontally to accommodate the load.
 
 #### Scaling horizontally
 
-Scaling horizontally means increasing the amount of available resources by getting multiple machines. This gives us two options:
+Scaling horizontally means increasing the amount of available resources by introducing multiple machines into the setup. This gives us two options:
 
-- keeping our original configuration and get multiple identical machines. In our case, we would need 10 machines since we have a 1:10 (enqueuing:processing) ratio.
-- scale vertically first by getting a better machine, such as the one described in the previous section (20 cores, 64GB or RAM) and get multiple identical machines. In our case, we would need 2 machines since we have a 1:2 (enqueuing:processing) ratio.
+- keep our original configuration and spin up multiple identical machines. In our case, we would need 10 machines since we have a 1:10 enqueuing to processing ratio.
+- scale vertically first by getting a better machine, such as the one described in the previous section (20 cores, 64GB of RAM) and get multiple identical machines. In our case, we would need 2 machines since we have a 1:2 (enqueuing:processing) ratio.
 
-Whichever option is chosen, they will both even out the enqueuing:processing ratio, which was our goal from the beginning.
-By choosing any of these two options we need to consider the fact that, for this to be possible, we need to have BJP that is scalable. In the next section, we will look at how this is done for Workerholic.
+Whichever option is chosen, they will both even out the enqueuing to processing ratio, which was our initial goal.
+By choosing any of these two options we need to consider the fact that for this to be possible we need to have a BJP that is scalable. In the next section, we will look at how this is done for Workerholic.
 
 ### Workerholic: a scalable BJP
 
-Workerholic is scalable because we use Redis as a central data store for the jobs. Workerholic will still need access to the source code of the main application, but won't be tied to a specific instance of the main application. Meaning, there can be a cluster of web servers or a single web server and Workerholic will still work the same. It is only concerned with what is enqueued in Redis, not how many main application instances are running. Workerholic is also scalable because its workers don't have a state except for the queue they're polling from, which is synchronized with Redis and dynamically updated every second on the Wokerholic's side.
+Workerholic is scalable because we use Redis as a central data store for the jobs. Workerholic will still need access to the source code of the main application, but won't be tied to a specific instance of the main application. Regardless if there is a web servers cluster or a single web server, Workerholic will still work the same. It is only concerned with what is enqueued in Redis - not how many main application instances are running. Workerholic is also scalable because its workers don't have a state except for the queue they're polling from, which is synchronized with Redis and dynamically updated every second on the Wokerholic's side.
 
+{: .center}
 ![scalibility_workerholic](/img/scalibility_workerholic.png)
 
 Workerholic is reliable, scalable and employs concurrency and parallelism to be efficient. How does it compare to a gold standard like Sidekiq? What other optimizations can we introduce?
 
 ## Optimizations
 
-When building a BJP it is important to see how the current implementation compares to a leader in the field. We decided to benchmark Workerholic against sidekiq in order to get some context as to where Workerholic is at and if we could optimize its performance.
+When building a BJP it is important to see how the current implementation compares to a leader in the field. We decided to benchmark Workerholic against Sidekiq in order to get some context as to where Workerholic stands and if we could optimize its performance.
 
 ### Serialization
 
 On our first iteration, we found that there was a great difference between Workerholic and Sidekiq; the former was much slower on both the enqueuing and the processing sides:
 
+{: .center}
 ![optimizations_serialization_benchmark_yaml](/img/optimizations_serialization_benchmark_yaml.png)
 
-What was our bottleneck? Sidekiq uses a similar model to Workerholic: concurrency via the use of threads. The difference seemed too big, especially since Workerholic should be a lighter BJP with less features and edge cases covered.
+What was our bottleneck? Sidekiq uses a similar application architecture: concurrency via the use of threads. The difference seemed too big, especially since Workerholic should be a lighter BJP with less features and edge cases covered.
 
-The first thing we noticed is that both the enqueuing side and processing side were slower. This gave us a major insight into realizing it was a bottleneck present on both end of the spectrum. We started wondering if the way we serialize our data may be the bottleneck. Indeed, we were using YAML while Sidekiq was using JSON.
+The first thing we noticed is that both the enqueuing and processing sides were slower. This gave us a major insight into realizing it was a bottleneck present on both ends of the application. We started wondering if the way we serialize our data may be the problem. Indeed, we were using YAML while Sidekiq was using JSON.
 So we decided to switch to a JSON serialization. The following YAML serialization:
 
 ```ruby
@@ -613,32 +616,35 @@ end
 
 After switching to JSON we benchmarked Workerholic against Sidekiq one more time:
 
+{: .center}
 ![optimizations_serialization_benchmark_json](/img/optimizations_serialization_benchmark_json.png)
 
 We were able to reduce our enqueuing time by 70% and processing time by 55% compared to our previous YAML iteration!
-Here the point is not to show that we're slightly faster than Sidekiq, because we probably aren't: we were benchmarking without logging out every single enqueued job and every single processed job, which slow down the performance a bit. But we are on par with Sidekiq's performance which is a great victory.
+Here the point is not to show we're slightly faster than Sidekiq, because we probably aren't: we were benchmarking without logging out every single enqueued job and processed job, which slightly decreases the performance. But we are on par with Sidekiq's performance which is a great victory!
 
 We have improved our efficiency by changing our serialization strategy. Can we optimize Workerholic even further?
 
 ### Using Custom Algorithms
 
-For this optimization we decided to benchmark Workerholic against Sidekiq by using 10,000 non-blocking, cpu-blocking, and IO-blocking jobs.
+For this optimization we decided to benchmark Workerholic against Sidekiq by using 10,000 non-blocking, CPU-blocking, and IO-blocking jobs.
 
+{: .center}
 ![efficiency_algorithms_benchmark](/img/efficiency_algorithms_benchmark_1.png){:width="400"}
 
-As shown in the above diagram, Sidekiq's random polling algorithm took 242 seconds. We decided to start with a simple and dynamic algorithm: evenly-balancing workers.
+As shown in the above diagram, it took 242 seconds for Sidekiq to enqueue and process every job by using its random polling algorithm. We decided to start with a simple and dynamic algorithm: evenly-balancing workers.
 
 #### Evenly balanced workers
 
 The purpose of this algorithm is to fairly distribute workers between each queue by dynamically assigning a queue to a worker, every second. This way if a queue is empty the workers that were polling from it can be evenly redistributed between the non-empty queues.
 
-Once we had a working implementation of the algorithm we decided to benchmark with the same scenario as we did for Sidekiq:
+Once we had a working implementation of the algorithm we decided to benchmark against Sidekiq using the same scenario from the previous example:
 
+{: .center}
 ![efficiency_algorithms_benchmark](/img/efficiency_algorithms_benchmark_2.png){:width="400"}
 
-The algorithm performed poorly compared to Sidekiq's random polling. It took 357 seconds to perform the same amount and type of jobs with our algorithm. This is because in the context of CPU-blocking jobs having multiple workers would not make a difference as compared to having one worker (when using MRI).
+The algorithm performed poorly compared to Sidekiq's random polling: it took 357 seconds to complete the same number and type of jobs with our algorithm. This is because in the context of CPU-blocking jobs having multiple workers would not make a difference as compared to having one worker (when using MRI).
 
-How can Workerholic perform better?
+How can we improve Workerholic to perform better?
 
 #### Adaptive and Successive Algorithm (ASP)
 
@@ -646,31 +652,34 @@ How can Workerholic perform better?
 
 We decided to create a different algorithm: we called it **Adaptive and Successive Provisioning (ASP)** of workers based on queue load. This would allow workers to switch faster to IO queues in case there are any because CPU-bound jobs are usually executed at a faster rate than IO blocking jobs. Once again we benchmarked using the same amount and type of jobs:
 
+{: .center}
 ![efficiency_algorithms_benchmark](/img/efficiency_algorithms_benchmark_3.png){:width="400"}
 
-The jobs were executed faster than our evenly-balancing algorithm but still much slower than Sidekiq's random polling. We thought we could do better and make Workerholic more efficient, which is why we went through a second iteration for our ASP algorithm.
+The jobs were executed faster than our evenly-balancing algorithm, but still much slower than Sidekiq's random polling. We thought we could do better and make Workerholic more efficient, which is why we went through a second iteration for our ASP algorithm.
 
 ##### Iteration 2
 
-We decided that we needed a way to distinguish queues containing IO-bound and CPU-bound jobs. Our first iteration of ASP was an improvement, but in the case of having queues containing CPU-bound jobs, we were still potentially assigning more than one worker.
+We decided that we needed a way to *distinguish* between queues containing IO-bound and CPU-bound jobs. Our first iteration of ASP was an improvement, but in the case of having queues containing CPU-bound jobs we were still potentially assigning more than one worker.
 
-The way we recognize which queues contain IO-bound jobs is by asking the user to flag the queues by appending `-io` to the queue name. This way when we use our ASP algorithm we make sure to only assign one worker per queue containing CPU-bound jobs and auto-balance the rest of the queues, which would be flagged as queues containing IO-bound jobs. As you may recall, having more workers on CPU-blocking jobs makes no difference, which is a waste of Workerholic's resources.
+The way we identify which queues contain IO-bound jobs is by asking the user to flag such queues by appending `-io` to the queue name. This way when we use our ASP algorithm we make sure to only assign one worker per queue containing CPU-bound jobs and auto-balance the rest of the queues, which would be flagged as queues containing IO-bound jobs. As you may recall, having more workers on CPU-blocking jobs makes no difference, which is a waste of Workerholic's resources.
 
+{: .center}
 ![efficiency_algorithms_benchmark](/img/efficiency_algorithms_benchmark_4.png){:width="400"}
 
 As shown in the above diagram, the performance for this algorithm is much closer to Sidekiq's random polling and it is performing better in the example scenario. Which is another great victory for us since we wanted to show how to build a BJP that would perform closely to the leaders in the field.
 
-*Note: We chose Sidekiq to benchmark against because it is the leader of background job processing in Ruby and we thought that is the bar we should aim for. These results should not be taken as a way to expose Workerholic being faster than Sidekiq. Workerholic is in its alpha stage and should not be used in production environments, this is first of all a project meant to be shared with the community and used to expose the different features and steps needed in order to build a BJP.*
+*Note: We chose Sidekiq to benchmark against because it is the leader of background job processing in Ruby and we thought that this is the bar we should aim for. These results should not be interpreted as our way of saying that Workerholic is faster than Sidekiq. Workerholic is in its alpha stage and should not be used in production environments - the main goal of this project is to share our experience and knowledge with the community as well as introduce features and steps needed to build a BJP.*
 
 ##### An Example
 
-Let's walk through the implementation of this ASP algorithm by using an example:
+Let's walk through the implementation of this ASP algorithm by looking at an example:
 
+{: .center}
 ![ASP_diagram_0](/img/ASP_diagram_0.png){:width="220"}
 
-We start with different queues, each having a different load. We have **25 workers**, which is Workerholic's default configuration.
+We start with different queues, each having a different load. There are **25 workers**, which is Workerholic's default configuration.
 
-When Workerholic starts, so does our `WorkerBalancer`, which will default to evenly balancing workers unless an `auto` option is detected.
+When Workerholic starts, so does our `WorkerBalancer` component, which will default to evenly balancing workers algorithm unless the`auto` option has been specified.
 
 ```ruby
 module Workerholic
@@ -690,7 +699,7 @@ module Workerholic
 end
 ```
 
-Next, we start the ASP algorithm inside a thread so it doesn't block the main thread of execution. The ASP algorithm will be run every second:
+Next, we start the ASP rebalancing inside a thread so it doesn't block the main thread of execution. The ASP rebalancing algorithm will be run every second:
 
 ```ruby
 module Workerholic
@@ -715,9 +724,10 @@ end
 
 At first, we assign one worker per queue.
 
+{: .center}
 ![ASP_diagram_1](/img/ASP_diagram_1.png){:width="350"}
 
-Then we need identify the IO queues and we provision them by using the ASP algorithm. In order to provision the queues we first need to calculate the average numbe of jobs that each worker should be executing if they were all given the same number of jobs. If queues were flagged as containing IO-bound jobs then we would only consider the load of these queues when calculating this average.
+Then we need to identify the IO queues and provision them by using our algorithm. In order to provision the queues we first need to calculate the average number of jobs that each worker should be executing if they were all given the same number of jobs. If queues were flagged as containing IO-bound jobs then we would only consider the load on these queues when calculating this *average number of jobs per worker*.
 
 Once the average number of jobs per worker is calculated we provision each queue with the adequate number of workers based on its load. Here is the implementation:
 
@@ -781,44 +791,50 @@ Let's walk through this algorithm in the context of our example:
 - then, we provision `Queue 2` with: `2,000 / 2,516.19 ~ 1`
 - we have now provisioned the queues with all 25 workers
 
+{: .center}
 ![ASP_diagram_2](/img/ASP_diagram_2.png){:width="350"}
 
-Next, we will start looking at how, as BJP builders, we can help a user make better decision about his/her background job system.
+Next, we will start looking at how, as BJP developers, we can help user make a better decision about her background job system.
 
 ## Reporting
 
-Reporting is an important feature to implement when building a BJP. It allows developers to gain insight into the overall state of jobs, the job types, jobs that failed, and how many jobs are completed over time, which the developer can use to make better decisions about adjustments needed to the background job system.
+Reporting is an important feature to have when building a BJP. It allows developers to gain insight into the overall state of jobs, their types, jobs that failed, and how many of them complete over time. This information can be used to make better decisions about adjustments needed to the background job system.
 
 A sneak peak into the overview page of our Web UI:
 
+{: .center}
 ![reporting_web_ui](/img/reporting_web_ui.png)
 
 ### Real-time Statistics
 
-#### What data?
+#### What data to collect?
 
 We decided to have Workerholic show our users aggregate data for finished jobs, queued jobs, scheduled jobs, failed jobs, current number of queues, and the memory footprint over time, as well as the breakdown of jobs for each class.
 
 All this data is updated every 10 seconds, using AJAX on the front-end to query our internal API for the data.
 
+{: .center}
 ![reporting_realtime_jobs_per_s](/img/reporting_realtime_jobs_per_s.png)
 
+{: .center}
 ![reporting_realtime_memory](/img/reporting_realtime_memory.png)
 
+{: .center}
 ![reporting_real_time_queues](/img/reporting_real_time_queues.png)
 
-Next, let's look into how we store this data.
+Now let's look into how we store this data.
 
 #### How to store the data?
 
 We decided to use Redis for the following reasons:
 
 - avoid using a new dependency
+- non-relational nature of our data
 - very efficient reads and writes (in-memory store)
 - automatic persistence to disk
-- use of convenient Redis data type: Sorted Set, for easy retrieval by using a timestamp related to the job execution or completion as a score
+- convenient Redis data type, sorted set, for easy retrieval of data points by using a timestamp which corresponds to the job execution or completion time as a score
 
-Here is how we save our jobs to redis for statistical purposes:
+Here is how we save our jobs to Redis for statistical purposes:
 
 ```ruby
 module Workerholic
@@ -838,24 +854,25 @@ module Workerholic
 end
 ```
 
-We add serialized jobs to the `workerholic:stats` sorted sets in redis with the `completed_at` timestamp as a score. This way when we want to retrieve jobs for the last 10 seconds we simply have to get all the jobs with a score between the current timestamp and the timestamp 10 seconds ago.
+We add serialized jobs to the `workerholic:stats` sorted sets in Redis with the `completed_at` timestamp as a score. This way when we want to retrieve jobs for the last 10 seconds we simply have to get all the jobs with a score between the current timestamp and the timestamp 10 seconds ago.
 
 #### How much data?
 
 Initially, we decided not to store live data and to just poll new data every 10 seconds. Once we introduced graphs into the web UI just polling for new data and throwing away stale data was no longer an option.
 
-At first, we decided to store data on the front-end for a certain number of data points so we could generate graphs. This worked, but only if the user stayed on the page. If the user navigated away from the page,the data was lost. Instead, we decided to rely on Redis to store this data, up to 1,000 seconds, so we could have a total of 100 data points.
+At first, we decided to store data on the front-end for a certain number of data points so we could generate graphs. This worked, but only if the user stayed on the page. If the user navigated away from the page, the data was lost. Instead, we decided to rely on Redis to store this data, up to 1,000 seconds, so we could have a total of 100 data points.
 
-Note that we also do some cleanup and remove the jobs that exceed this 1,000 seconds time range from our `workerholic:stats` sorted sets.
+Note that we also do some cleanup and remove the jobs that exceed this 1,000 seconds threshold from our `workerholic:stats` sorted sets.
 
 After solving the problem for live data we decided to introduce historical data so that users could have a broader view at their completed/failed jobs.
 
 ### Historical Statistics
 
-#### What data?
+#### What data to collect?
 
 We decided to display data for completed and failed jobs, as well as the breakdown for each class, up to 365 days. This way users would have a broad overview of their background jobs state over time.
 
+{: .center}
 ![reporting_historical_charts](/img/reporting_historical_charts.png)
 
 #### How to store the data?
@@ -882,11 +899,11 @@ end
 
 In the code above the date range would be delimited by having the earliest timestamp of the date range as the `minscore` and the latest timestamp as the `maxscore`.
 
-However, we ran into concurrency issues because we had to perform 3 separate operations, for which we could not guarantee the atomicity: getting the count of jobs from Redis, removing the count from Redis, incrementing the count in our code and pushing the count back in Redis.
+However, we ran into concurrency issues because we had to perform 3 separate operations, for which we could not guarantee the atomicity of this whole transaction: getting the count of jobs from Redis, removing the count from Redis and incrementing the count in our code and pushing the count back in Redis.
 
 ##### Second Iteration
 
-In our second iteration, we decided to use a hash, with the timestamp as the field key and the count of jobs as the field value, instead of a sorted set. This way we pushed the computation logic down to the Redis by using its convenient command for incrementing a hash field value:
+In our second iteration, instead of a sorted set we decided to use a hash, with the timestamp as the field key and the count of jobs as the field value. This way we pushed the computation logic down to the Redis by using its convenient command for incrementing a hash field value:
 
 ```ruby
 module Workerholic
@@ -902,14 +919,14 @@ module Workerholic
 end
 ```
 
-By doing the above we avoid concurrency issues by relying on Redis, which uses a write lock when executing the `HINCRBY` command.
+By doing the above we avoid concurrency issues by relying on Redis executing the `HINCRBY` command in an atomic fashion.
 Once we figured out how we wanted to store the data, we needed to think about how many data points to store.
 
 #### How much data?
 
 We decided to store data for up to 365 days.
 
-As a starting point we decided to look at how much space would a hash field, with a timestamp as a field key and a count of jobs as a value field. To this effect we wrote a short Ruby script that would set 10,000 hash fields in Redis. Then we use `redis-cli` and the `debug object` command in order to get the size of the whole hash.
+As a starting point we decided to look at how much space would a hash field take, with a timestamp as a field key and the number of jobs as a value field. To this effect we wrote a short Ruby script that would set 10,000 hash fields in Redis. Then we used `redis-cli` and the `debug object` command to get the size of the whole hash.
 
 ```ruby
 require 'redis'
@@ -921,29 +938,33 @@ redis = Redis.new
 end
 ```
 
+{: .center}
 ![reporting_historical_redis_size](/img/reporting_historical_redis_size.png)
 
-As you can see above we also ran the script for 100,000 hash fields so we can check if the size is consistent. And it is since we have a difference of 10x.
+By looking at the image above, you can see that we also ran the script for 100,000 hash fields so we could check if the size is consistent. And since we have a difference of 10x, we can conclude that it is.
 
-To get the average of how much memory each field would take we need to divide the whole size of the hash by 100,000, which gives us an average of 8 bytes per hash field.
-Next, we computed some estimations:
+To get the average memory footprint each field would take we need to divide the whole size of the hash by 100,000, which gives us an average of 8 bytes per hash field.
 
+Next, we made a few estimations:
+
+{: .center}
 ![reporting_historical_estimations](/img/reporting_historical_estimations.png)
 
-We make an assumption that there would be 25 different job classes, and from there if we took one data point a day, that would give us 9000 fields which translates to 0.1MB. One data point per hour would give us for 219,000 fields which translates to 1.7MB. And one data point per minute would give us 13M fields which translates to 100MB.
+We make an assumption that there would be 25 different job classes, and from there if we took one data point a day, that would give us 9000 fields which translates to 0.1MB. One data point per hour would give us 219,000 fields which translates to 1.7MB. And one data point per minute would give us 13M fields which translates to 100MB.
 
-From this, we realized that one data point per day is the only viable solution to be able transfer information over the wire quickly when a user requests 365 days of data.
+To be able to transfer data over the wire quickly when a user requests 365 days of data, we realized that one data point per day is the only viable option 
 
-In the next section we will start diving into the additional features that can be added to a BJP and that we actually implemented for Workerholic.
+In the next section we will start exploring additional features that can be added to a BJP and that we actually implemented for Workerholic.
 
 ## Configurability
 
-Another common attribute of BJPs is the ability to configure and adjust them to the needs of the developer. Some web applications may have a million background jobs per day, while some maybe only have 10. In which case, it's safe to assume that the main configuration options should not be set once and for all by the BJP's developers -- by not doing so we let our end-users take control of the most important parameters. In addition, this removes the guessing part on the BJP developer's end -- now there's no need to think about every possible use-case.
-Common configuration options include grouping jobs by type (which means using multiple queues), enable parallel execution (especially in MRI) by spawning multiple processes, and be able to run on multiple Ruby implementations like JRuby or Rubinius. The challenge for Workerholic was how to make it configurable to satisfy the needs of most of our users (or potential users)
+Another common attribute of BJPs is the ability to configure and adjust them to the needs of the developer. Some web applications may have millions of background jobs per day, while some maybe only have 10. In which case, it's safe to assume that the main configuration options should not be set once and for all by the BJP's developers - by not doing so we let our end-users take control of the most important parameters. In addition, this removes the guessing part on the BJP developer's end - now there's no need to think about every possible use-case that our users may have.
+Common configuration options include grouping jobs by type (which means using multiple queues), enable parallel execution (especially in MRI) by spawning multiple processes, and be able to run on multiple Ruby implementations like JRuby or Rubinius. The challenge for us was to make Workerholic configurable to satisfy the needs of the majority of our users (or potential users).
 
+{: .center}
 ![configurability_CLI](/img/configurability_CLI.png)
 
-And how we tackled the configurability problem is by having multiple configuration options. We provide an option to auto-balance workers, an option to set the number of workers based on your application's needs, an option to load your application by supplying a path, an option to specify the number of processes you want to spin up, and the number of connections in the redis connection pool. All those options are packaged up into a simple and intuitive API. And like all other good command-line tools, we have the --help flag to show you how to use these options.
+And the way we tackled the configurability problem was by having multiple configuration options. We provide an option to auto-balance workers, an option to set the number of workers per process based on application's needs, an option to load application's source code by providing a path, an option to specify the number of processes to be spawned and the number of connections in the Redis connection pool. All those options are available as a simple and intuitive API. And like all other good command-line tools, we have the `--help` flag to introduce these options to a new user.
 
 ## Ease of Use
 
@@ -951,7 +972,7 @@ A background job processor shoud be easy to setup and use. In the context of the
 Rails integration is important not only because it's a good-to-have feature, but more because Rails has become a gold standard of Ruby web-development ecosystem. And since Workerholic's core functionality revolves around web-applications, it does not make much sense to build it without complete Rails integration.
 
 Like any other project, background job processors need to satisfy the needs of the majority of users. To achieve that, we needed to think about some sensible default configuration options. By doing so we allow users to focus on the needs of their web applications and not the tweaking of some arcane parameters.
-To make it work out of the box, we pre-defined default options so you don't need to supply anything we mentioned previously. By default, there will be 25 workers and the default number of Redis connections is the number of workers + 3, in this case, 28. This is the three additional connections we need for the job scheduler, worker balancer, and the memory tracker.
+To make it work out of the box, we pre-defined default options so you don't need to supply anything we mentioned previously. By default, there will be 25 workers and the default number of Redis connections will be set to the number of workers + 3, in this case, 28. These three additional connections are required for the job scheduler, worker balancer, and the memory tracker components to function properly.
 
 ### Default Configuration
 
@@ -973,7 +994,7 @@ module Workerholic
 end
 ```
 
-Workerholic also has a default for 1 process. If `options[:processes]` is defined, we fork the specified number of processes. Otherwise, we just start the manager for one process.
+By default, Workerholic creates 1 process. If `options[:processes]` is defined, we fork the specified number of processes. Otherwise, we just start the manager for one process.
 Since we don't make any assumptions about the types of jobs your web application might have, Workerholic will use evenly balancing workers algorithm.
 
 ```ruby
@@ -1037,15 +1058,13 @@ module Workerholic
 end
 ```
 
-When Workerholic starts, it loads the main application in order to have access to the job classes. This way it can perform the jobs on the processing side. In case a Rails app is detected it will load the Rails application codebase along with our own active job adapter.
+When Workerholic starts, it loads the main application's source code in order to have access to the job classes. This way it can perform the jobs on the processing side. In case a Rails app is detected, it will load the Rails application codebase along with our own active job adapter.
 
 ## Testing
 
 As we were developing our features, we needed to test our code.
 When building a background job processor, you need to test your code to make sure you do not introduce regressions by adding a feature or refactoring existing code.
-For Workerhollic, we decided to have a testing environment separated from our development environment by setting a Redis DB on a different port.
-
-For the testing environment, we set up Redis with a different port, so that it does not pollute our development Redis database.
+For Workerhollic, we decided to have a testing environment separated from our development environment by setting a Redis DB on a different port. This way we don't pollute our development database with testing samples.
 
 ### Testing Setup
 
@@ -1077,7 +1096,7 @@ end
 
 ### Testing and Threads
 
-What we found along the way is testing threaded code is not trivial. We spent quite some time trying to figure this out, and this is because having multiple threads means that there is naturally asynchronous execution, meaning that we cannot expect the results immediately. Additionally, there is potential dependency on other threaded components, which add up to the overall complexity.
+What we found along the way was that testing threaded code is not trivial. We spent quite some time trying to figure out how to tame the async nature of threaded code. Having multiple threads running concurrently does not allow us to *expect* results immediately. Additionally, there is potential dependency on other threaded components, which add up to the overall complexity.
 
 ```ruby
 # spec/worker_spec.rb
@@ -1118,29 +1137,33 @@ end
 
 ### Workerholic compared to the Gold Standard: Sidekiq
 
-Finally, we wanted to compare with Sidekiq one last time with each types of jobs individually. We're on par with Sidekiq, and only slightly faster than Sidekiq each time, and as we mentioned before this is because Sidekiq is a more mature and robust solution with a much larger feature-set.
+Finally, we wanted to compare Workerholic with Sidekiq one last time with different types of jobs individually. We're on par with Sidekiq, and only slightly faster than Sidekiq each time, and as we mentioned before this is because Sidekiq is a more mature and robust solution with a much larger feature-set.
 
+{: .center}
 ![benchmark_workerholic_sidekiq](/img/benchmark_workerholic_sidekiq.png)
 
-We also decided to compare the results of JRuby vs MRI. Because jRuby can run in parallel without the need of spinning up multiple processes, we found that execution of CPU blocking jobs was much faster in JRuby than in MRI, which is what we would expect.
+As an additional feature, we wanted to make sure Workerholic runs on various Ruby interpeters and that's why we chose JRuby (one of the most stable and mature Ruby interpreters) to be the main alternative interpreter. To ensure full compatibility, we ran an extensive set of jobs on our Rails application.
+We also decided to benchmark JRuby against MRI. Because JRuby can run in parallel without the need of spinning up multiple processes, we found that execution of CPU blocking jobs was much faster in JRuby than in MRI, which is what we would expect.
 
 ### JRuby
 
+{: .center}
 ![benchmark_jruby](/img/benchmark_jruby.png)
 
 # Conclusion
 
-It was a lot of fun to work on this project! Our goal was to share this knowledge with the community and we are confident our experience will be useful to other software engineers even if they don't have a plan to developer their own background job processor. After all it's usually a very interesting enterprise to understand how something works under the hood!
+It was a lot of fun to work on this project! Our goal was to share this knowledge with the community and we are confident our experience will be useful to other software engineers even if they don't have a plan to build their own background job processor. After all, it's usually a very interesting enterprise to understand how something works under the hood!
 
 As for us, we learned and expanded our knowledge about:
 
-- concurrency, and specifically threads
-- parallel execution using multiple processes and other Ruby interpreters
-- lower level details about threads and processes, such as their memory footprint
+- concurrency in general and threads in particular
+- parallel execution using multiple processes
+- low level constructs such as threads and processes and their memory footprint
 - the impact on computational and memory resources when using multiple threads and multiple processes
-- using Redis as a key:value store and taking advantage of its awesome features such as native data structures, great performance and database snapshots
+- using Redis as a key/value store and taking advantage of its awesome features such as native data structures, great performance and database snapshots
 - building a Ruby gem
 - providing users with an easy-to-use yet powerful CLI
+- working with other Ruby interpreters
 
 Since Workerholic is still in alpha, we do not recommend using it in a production environment. As for the next steps, we have quite a few in mind:
 
