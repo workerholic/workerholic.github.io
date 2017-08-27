@@ -631,7 +631,7 @@ For this optimization we decided to benchmark Workerholic against Sidekiq by usi
 {: .center}
 ![efficiency_algorithms_benchmark](/img/efficiency_algorithms_benchmark_1.png){:width="400"}
 
-As shown in the above diagram, it took 242 seconds for Sidekiq to enqueue and process every job by using its random polling algorithm. We decided to start with a simple and dynamic algorithm: evenly-balancing workers.
+As shown in the above diagram, it took 242 seconds for Sidekiq to process every job by using its random polling algorithm. We decided to start with a simple and dynamic algorithm: evenly-balancing workers.
 
 #### Evenly balanced workers
 
@@ -699,7 +699,7 @@ module Workerholic
 end
 ```
 
-Next, we start the ASP rebalancing inside a thread so it doesn't block the main thread of execution. The ASP rebalancing algorithm will be run every second:
+Next, we use our ASP algorithm inside a thread so it doesn't block the main thread of execution. The ASP algorithm will be run every second:
 
 ```ruby
 module Workerholic
@@ -794,11 +794,11 @@ Let's walk through this algorithm in the context of our example:
 {: .center}
 ![ASP_diagram_2](/img/ASP_diagram_2.png){:width="350"}
 
-Next, we will start looking at how, as BJP developers, we can help user make a better decision about her background job system.
+Next, we will start looking at how we can help the user make a better decision about her background job system.
 
 ## Reporting
 
-Reporting is an important feature to have when building a BJP. It allows developers to gain insight into the overall state of jobs, their types, jobs that failed, and how many of them complete over time. This information can be used to make better decisions about adjustments needed to the background job system.
+Reporting is an important feature to implement when building a BJP. It allows developers to gain insight into the overall state of jobs, their types, jobs that failed, and how many of them complete over time. This information can be used to make better decisions about adjustments needed to the background job system.
 
 A sneak peak into the overview page of our Web UI:
 
@@ -899,7 +899,7 @@ end
 
 In the code above the date range would be delimited by having the earliest timestamp of the date range as the `minscore` and the latest timestamp as the `maxscore`.
 
-However, we ran into concurrency issues because we had to perform 3 separate operations, for which we could not guarantee the atomicity of this whole transaction: getting the count of jobs from Redis, removing the count from Redis and incrementing the count in our code and pushing the count back in Redis.
+However, we ran into concurrency issues because we had to perform 3 separate operations, for which we could not guarantee the atomicity of this whole transaction: getting the count of jobs from Redis, removing the count from Redis, incrementing the count in our code and pushing the count back in Redis.
 
 ##### Second Iteration
 
@@ -1143,6 +1143,7 @@ Finally, we wanted to compare Workerholic with Sidekiq one last time with differ
 ![benchmark_workerholic_sidekiq](/img/benchmark_workerholic_sidekiq.png)
 
 As an additional feature, we wanted to make sure Workerholic runs on various Ruby interpeters and that's why we chose JRuby (one of the most stable and mature Ruby interpreters) to be the main alternative interpreter. To ensure full compatibility, we ran an extensive set of jobs on our Rails application.
+
 We also decided to benchmark JRuby against MRI. Because JRuby can run in parallel without the need of spinning up multiple processes, we found that execution of CPU blocking jobs was much faster in JRuby than in MRI, which is what we would expect.
 
 ### JRuby
