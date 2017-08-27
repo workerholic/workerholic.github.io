@@ -1,20 +1,22 @@
 
 # Introduction
 
-Why use a Background Job Processor (BJP)?
+We started by acquiring a deeper understanding about **why** would one use a **Background Job Processor** (BJP)?
 
-Let's look at a simple example of a user, identified as the `Client`, registering on a web site `awesome-website.com`. When users register on `awesome-website.com` they receive an email in order for them to verify their email address. What does this mean on the Web Server side?
-In the case of `awesome-website.com`, sending an email requires to send an HTTP request to an Email Service Provider (ESP) and wait for a response, depending on the latency of the ESP and the geographical distance between the Web Server and the ESP's server this could take from 2ms to 500ms or more. Let's assume the worst and consider each trip over the wire to the ESP takes 500ms. This means that if the Web Server's usual response time for this kind of HTTP request is 150ms then it will take 650ms total to send a response back to the client.
+To this effect we decided to illustrate the basic use of a BJP with an **example**:  a user, identified as the `Client`, wants to register on a web site `awesome-website.com`. When users register on `awesome-website.com` they receive an email in order for them to verify their email address. What does this mean on the `Web Server` side?<br>
+In the case of `awesome-website.com`, sending an email requires to send an HTTP request to an Email Service Provider (ESP) and **wait for a response**, depending on the latency of the ESP and the geographical distance between the `Web Server` and the ESP's server this could take from 2ms to 500ms or more. Let's assume the worst and consider each trip over the wire to the ESP takes 500ms. This means that if the Web Server's usual response time for this kind of HTTP request is 150ms then it will take 650ms total to send a response back to the client.
 
+{: .center}
 ![Request-Response](/img/popular_features_example_1.png){:width="400"}
 
-650 ms could be considered a slow response time, but it is not unacceptable. What happens if the ESP sees its latency increase by a 5 seconds because of a network error or a an unexpected spike in traffic? The client would have to wait 5,650ms in order to receive a response. How can we do better? Does the user really need to receive a response a be able to interact with the rest of the website only once the email has been correctly sent? The answer is no, which means that we could send the email asynchronously and, in the meantime, let the user interact with the website, maybe even send another HTTP request to view a different page. This is where a **Background Job Processor** comes in. Its sole purpose is to be delegated some jobs/work so it can be performed asynchronously and unburden the web server from *blocking* work.
+650 ms could be considered a **slow response time**, but it is not unacceptable. What happens if the ESP sees its latency increase by a 5 seconds because of a network error or a an unexpected spike in traffic? The client would have to **wait 5.65 seconds** in order to receive a response. **How can we do better?** Does the user really need to receive a response a be able to interact with the rest of the website only once the email has been correctly sent? The answer is no, which means we could send the email asynchronously and, in the meantime, let the user interact with the website, maybe even send another HTTP request to view a different page. This is where a **Background Job Processor** comes in. Its sole purpose is to be delegated some jobs/work so it can be **performed asynchronously** and unburden the web server from **blocking work**.
 
+{: .center}
 ![Example BJP](/img/popular_features_example_2.png){:width="500"}
 
-# Background Job Feature Overview
+# Background Job Features Overview
 
-Before we get into how to build a Background Job Processor, let's take a quick run at the features a BJP needs to have, based on research done on other popular BJPs:
+Before we get into how we built a Background Job Processor, let's take a quick run at the features a BJP needs to have, based on our research about other popular BJPs:
 
 **Core Features:**
 
@@ -22,22 +24,24 @@ Before we get into how to build a Background Job Processor, let's take a quick r
 - **reliability**: a BJP should be able to handle errors gracefully and be resilient in case of a crash
 - **efficiency:** a BJP should perform the jobs that it is handed in a timely manner so that it does not get a constantly increasing backlog of jobs
 - **scalability**: a BJP should scale in the context of a distributed system
-- **reporting**: a BJP should track statistics about jobs, errors and other related information for better decision making
+- **reporting**: a BJP should track statistics about jobs, errors and other related information so the user can make better decisions about its background job system
 
 **Additional Features:**
 
-- **configurability**: a BJP should be configurable in order to allow developers to tweak options so that the BJP can best fit their own application's requirements
-- **ease of use**: a BJP should be simple to use out-of-the-box and, if written in Ruby, integrate with rails
+- **configurability**: a BJP should be configurable in order to allow its users to configure the available options to best fit their own application's requirements
+- **ease of use**: a BJP should be simple to use out-of-the-box and, if written in Ruby, integrate with Rails
 
 # Introducing Workerholic: Overall Architecture
 
+{: .center}
 ![Workerholic Overvall Architecture](/img/workerholic_overall_architecture.png)
 
 Above is a diagram of the overall architecture of our BJP, Workerholic.
+
 - On the left is a stack of instances of a web application, each including Workerholic. Jobs are defined and enqueued in these web application instances.
 - In order for the jobs to be enqueued, they are first serialized and then stored in Redis, by being pushed inside Redis' List data structure, serving as `Job Queues`.
 - On the right, Workerholic workers poll from the job queues and, if there are any jobs to be done, process the jobs using the `Job Processor` component of Workerholic.
-- Regardless of whether the job is completed successfully or not, we store the job back in Redis inside a data structure serving as `Stats` storage. We will then use to this statistical information to display background jobs related metrics on our web UI.
+- Regardless of whether the job is completed successfully or not, we store the job back in Redis inside a data structure serving as `Stats` storage. We will then use this statistical information to display background jobs related metrics on our web UI.
 - If a job failed, we use the `Job Retry` component along with the `Job Scheduler` component in order to attempt to retry a job sometime in the future. To do so, a future timestamp is placed on the job, it is then stored into Redis inside a `Scheduled Jobs` sorted set (a Redis data structure that we will expand on later in this post).
 - The `Job Scheduler` will peek the sorted set and compare timestamps to see if there is a job due. If that's the case, the job will be enqueued into a Job Queue and the cycle continues.
 
@@ -47,14 +51,14 @@ The idea behind this project was to build a BJP from scratch and sharing our fin
 
 ## Reliability
 
-One of the most important features of any background job processor is reliability. When performing a job, a network issue that prevents email from being sent could occur, or the job could be misconfigured. Also, the main application and/or the BJP could crash. Regardless of the reason, we want to make sure that jobs are not lost.
+One of the most important features of any background job processor is reliability. When performing a job, a network issue that prevents email from being sent could occur, or the job could be misconfigured, or the main application and/or the BJP could crash. Regardless of the reason, we want to make sure that jobs are not lost.
 
-How can we make our BJP reliable?
+How can we make our BJP **reliable**?
 
 ### Jobs Persistence
 
 As mentioned above, a question that needs to be answered is: how can we make sure our jobs don't get lost if the BJP or the main application crashes?
-To solve this problem we introduced a data store. This data store is used to persist the serialized jobs that have been enqueued by the main application.
+To solve this problem we introduced a **data store**. This data store is used to **persist the serialized jobs** that have been enqueued by the main application.
 
 For Workerholic, we decided to use Redis thanks to the following features:
 
@@ -63,6 +67,7 @@ For Workerholic, we decided to use Redis thanks to the following features:
 - key:value data store, that provides convenient and easy to use API to access the data
 - in-memory data store with high performance for schema-less data (our use-case)
 
+{: .center}
 ![Jobs Persistence Diagram](/img/jobs_persistence_redis.png)
 
 By relying on Redis and its robustness we made Workerholic reliable. Redis helps solve the problem of when either the web application or BJP itself crashes, the jobs stored in Redis will be persisted. Redis automatically takes database snapshots, which means in case it crashes, we will also have the jobs persisted to disk.
@@ -71,11 +76,12 @@ This solves the problem of the main application's or BJP's unexpected shutdown/c
 
 ### Retrying Failed Jobs & Job Scheduler
 
-Jobs can fail for numerous reasons that may or may not be in the developer's control such as temporary network issues, timeouts, invalid job, etc. Regardless of the reason, the BJP needs to handle these errors. In case the error being raised while the job is being performed is a momentary error, then it might be a good idea to have a way to retry this job later in the future.
+**Jobs can fail** for numerous reasons that may or may not be in the developer's control such as temporary network issues, timeouts, invalid job, etc. Regardless of the reason, the BJP needs to handle these errors. In case the error being raised is a momentary error, then it might be a good idea to retry the job.
 
+{: .center}
 ![Retry Failed Jobs Diagram](/img/job_retry.png)
 
-Workerholic will attempt to retry intermittently failing jobs. The way we set up job retrying is by scheduling the job to be performed at some time in the future, effectively turning a failed job into a scheduled job. Here is the implementation of Workerholic's `retry` functionality:
+Workerholic will attempt to retry intermittently failing jobs. We implemented the `JobRetry` feature by scheduling the job to be performed at some time in the future, effectively turning a failed job into a scheduled job. Here is the implementation of Workerholic's `retry` functionality:
 
 ```ruby
 module Workerholic
@@ -199,7 +205,7 @@ This will allow the worker to finish executing its current job. Afterwards, we `
 
 ## Efficiency
 
-Efficiency is another core feature for a BJP. Why does a BJP need to be efficient? How can make it efficient? Those are the questions that we will answer in the following sections.
+Efficiency is another core feature for a BJP. Why does a BJP need to be efficient? How can we make it efficient? Those are the questions that we will answer in the following sections.
 
 ### An Example Scenario
 
@@ -209,7 +215,7 @@ Suppose we have a significantly big Rails application with the following constra
 
 - 1000 average queries per second (QPS)
 - 10% of these queries involve sending email
-- 1% of these queries involve image processing
+- 1% of these queries involve some image processing
 
 Let's also assume we have a machine with the following specs:
 
@@ -218,7 +224,7 @@ Let's also assume we have a machine with the following specs:
 
 #### Challenge
 
-How can we build a BJP that will maximize the use of available hardware resources?
+How can we build a BJP that will maximize the use of the available hardware resources?
 
 ### Concurrency
 
@@ -227,44 +233,47 @@ How can we build a BJP that will maximize the use of available hardware resource
 First of all, we need to do a bit of calculations in order to understand the problem we face in this particular scenario:
 
 - Let's assume it would take an average of **50ms** for a trip over the wire (sending a request and receiving a response) to the Email Service Provider of the Rails application.
-- For a **24 hour window**, at 86,400 seconds per day and **1000 QPS**, we will get **86.4 million requests per day**.
+- For a **24 hour window** (86,400 seconds) and **1000 QPS**, we will get **86.4 million requests per day**.
 - **10%** of these requests involve sending an email. This means sending **8.64 million emails** in a 24 hour window.
-- If sending an email takes an average of 50ms, it means that in a span of 24 hours, we have a list of jobs that will take **120 hours to process**, which gives us an enqueuing:processing ratio of **1:5**. In other words, in 24 hours time there can only be `8.64M / 5 = 1.73M` out of 8.64M jobs that can be performed.
+- If sending an email takes an average of **50ms**, then, in a span of 24 hours,  it would take **120 hours** to send all the emails, which would give us an enqueuing:processing ratio of **1:5**. In other words, in 24 hours time there can only be `8.64M / 5 = 1.73M` out of 8.64M jobs that can be performed.
 
 This insight raises two issues:
 
-1. **Increased latency**: for every day that passes there are 4 more days of email sending that need to be performed. This means that any job enqueued after the first 24 hours won't be executed until the next 96 hours *(120 - 24)* have passed, since it is the time it would take to perform all the jobs that were enqueued before.
-2. **Quickly hitting storage limit**:
-  - In the context of Workerholic a job takes about 26 bytes on average. We calculated this number by pushing 100,000 jobs into a job queue, getting the total size of the list and dividing it by 100,000.![serialized_job_length_redis](/img/serialized_job_length_redis.png)
-  - After 7 days, we'd have a backlog of `8.64M * 7 - (8.64M / 5) * 7 = 48.4M` email sending jobs that still need to be processed.
-  - These jobs would need `48.4M * 26B = 1.17GB` of memory in order to be stored in Redis.
+1. **Increased latency**: every 24 hours, there are 8.64 millions emails that need to be sent. This would take 120 hours (5 days) to complete. Consequently, any job enqueued after the first 24 hours won't be executed until the next 96 hours *(120 - 24)* have passed, effectively increasing the latency by 96 hours per day.
+2. **Storage limit**:
+  - In the context of Workerholic a serialized job takes about 26 bytes of memory in Redis. We calculated this number by pushing 100,000 jobs into a job queue, getting the total size of the list in bytes (`serializedlength`) and dividing it by 100,000.![serialized_job_length_redis](/img/serialized_job_length_redis.png)
+  - Each day, we have a backlog of `8.64M - 8.64M / 5 = 6.91M` email sending jobs that still need to be processed.
+  - These jobs would take `6.91M * 26B = 171.34 MB` of memory in order to be stored in Redis. At this rate, our jobs storage space would be reaching the storage limit after 24 (4096 / 171.34) days.
 
-An additional backlog of 96 hours of email sending jobs everyday, along with an additional 1.17GB of memory occupied by this same backlog of email sending jobs every week make for a very inefficient background job system.
+With our current naive approach we have the **latency increasing at a rate of 96 hours per day**, along with the **jobs storage space increasing at a rate of 171.34 MB per day**. This would make for a very inefficient background job system.
 
-The challenge for us here is to even the enqueuing throughput and the dequeuing throughput. We should not slow down the enqueuing side or else our web application will become unresponsive, waiting for jobs to be enqueued before moving on, so let's focus on increasing the processing throughput.
+The challenge for us here is to balance out the enqueuing throughput and the dequeuing throughput. Slowing down the enqueuing side is not a viable option because this web application would become unresponsive, waiting for jobs to be enqueued before moving on, so let's focus on increasing the processing throughput.
 
 #### Concurrency & Threads
 
-Based on our scenario, we need to maximize the job processing through put by a factor of 5. How can we increase the job processing throughput when it comes to a BJP?
+Based on our scenario, we need to maximize the job processing throughput by a factor of 5. How can this be achieved?
 
-Currently, we have one worker processing the jobs one by one, sequentially. Our goal is to process 5 these jobs 5 times as fast, this means we could have 5 workers instead of 1 working together in order to process 5 jobs, instead of one, in 50 ms. This is where the concept of **Concurrency** comes in.
-Concurrency is employed to design atomic units of work than can be executed at the same time, concurrently. This means that for a time window, two or more units of works are worked on, it could be at the exact same time (in parallel) or alternatively but never at the exact same time (not in parallel). In our case, units of works would be the jobs that need to be processed.
+Currently, we have one worker processing the jobs one by one, sequentially. Our goal is to process these jobs 5 times as fast, hence, we need five workers instead of one, working together so they can process five jobs, instead of one, in 50 ms. This is where the concept of **Concurrency** comes in.
 
-In Ruby we can enable **Concurrency** by using **Threads**. A Ruby program always has a main thread of execution in which the usual code is executed. It is possible for this main thread to use the `Thread` API, provided by the Ruby core library, in order to spawn new threads of execution. A thread of execution executes independently from other threads of execution.
+Concurrency is employed to design atomic units of work than can be executed at the same time, concurrently. That is, for a given time window, two or more units of work are worked on. It could be at the exact same time (in parallel), or, alternatively but never at the exact same time (not in parallel). In our case, a unit of work is a job.
 
-Threads rely on what is called the **OS scheduler** in order to receive some computational resources from a CPU core. This is how they are able to execute the code they contain. The OS Scheduler is in charge of fairly attributing some computational resources to each thread and process by scheduling them on CPU cores for a specific duration.
+In Ruby we can enable **Concurrency** by using **Threads**. A Ruby program *always* has a **main thread** of execution in which the code is executed. It is possible for this main thread to use the `Thread` API, provided by the Ruby core library, in order to spawn new threads of execution. A thread of execution executes independently from other threads of execution.
 
+Threads rely on what is called the **OS scheduler** in order to receive some computational resources from a CPU core. This is how they are able to execute the code they contain. The OS Scheduler is in charge of fairly attributing some computational resources to each thread and process by **scheduling them on CPU cores** for a specific duration.
+
+{: .center}
 ![efficiency_OS_scheduler_threads](/img/efficiency_OS_scheduler_threads.png){:width="400"}
 
-In MRI (Matz Ruby Interpreter, aka CRuby, the main Ruby implementation that we are all used to), threads enable concurrency but do not execute in parallel. This is because of the Global Interpreter Lock (GIL). Each thread can be scheduled to receive some CPU time by the OS scheduler but with the limitation of having the executing MRI process not being able to receive computational resources from more than 1 CPU core at a time.
+In **MRI** (Matz Ruby Interpreter, aka CRuby, the main Ruby implementation that we are all used to), **threads enable concurrency but do not execute in parallel**. This is because of the Global Interpreter Lock (**GIL**). Each thread can be scheduled to receive some CPU time by the OS scheduler but with the limitation of having the executing MRI process not being able to receive computational resources from more than 1 CPU core at a time.
 
+{: .center}
 ![efficiency_mri_gil](/img/efficiency_mri_gil.png){:width="450" height="200"}
 
 With this limitation it does not seem to make a difference to add threads. We will just be executing jobs concurrently but it will take the same amount of time. The OS scheduler will allocate the computational resources from a single CPU core between the Threads sequentially, by invoking Conext Switching, but not in parallel.
 
-Our jobs are IO bound because they require a trip over the wire: sending a request to the Email Service Provider API and receiving a response once the email has been sent. This trip over the wire takes 50 ms on average. Having an IO bound job executing inside a thread means that this thread will be put in a sleeping state for 50ms. During this time the OS scheduler can schedule the 4 other threads to a CPU core which will also be put in a sleeping state for 50 ms during the trip over the wire. This way we will have 5 workers sleeping at the same time and all waiting on IO to keep executing. Once a worker receives a response it will keep executing once the OS scheduler schedules it again on a CPU core.
+Our jobs are **IO bound** because they require a trip over the wire: sending a request to the Email Service Provider API and receiving a response once the email has been sent. This trip over the wire takes 50 ms on average. **Having an IO bound job executing inside a thread means that this thread will be put in a sleeping state** for 50ms. During this time the OS scheduler can schedule the 4 other threads to a CPU core which will also be put in a sleeping state for 50 ms during the trip over the wire. This way we will have 5 workers sleeping at the same time and all waiting on IO to keep executing. Once a worker receives a response it will keep executing once the OS scheduler schedules it again on a CPU core.
 
-The point here is that we cannot have threads running in parallel, but if the job being executed inside a thread has to wait on IO for 99.99% of the total execution job time then multiple threads can spend almost all of this time waiting simultaneously, in parallel, instead of having a single thread having to wait on all jobs sequentially.
+The point here is that we cannot have threads running in parallel, but if the job being executed inside a thread has to wait on IO for 99.99% of the total execution job time then **multiple threads can spend almost all of this time waiting simultaneously, in parallel**, instead of having a single thread having to wait on all jobs sequentially.
 
 After implementing Concurrency by using multiple workers in Workerholic we decided to benchmark, using MRI, the effect of having multiple workers working on different types of jobs:
 
@@ -272,16 +281,21 @@ After implementing Concurrency by using multiple workers in Workerholic we decid
 - CPU-blocking jobs: calculate primes up to 1,000,000
 - IO-blocking jobs: sleep for 500ms to simulate a third party API call (based on GitHub API call response time)
 
+{: .center}
 ![benchmark_workers_count](/img/benchmark_workers_count.png)
 
-As we can see from the results here: for non-blocking and CPU-blocking jobs, multiple workers doesn't help the situation because of the GIL in MRI. In fact, it makes it worse due to the overhead incurred from context switching between threads. But if you look at the IO-blocking jobs: with one worker, it would've taken a very long time, 5034 seconds, way off the chart (the y-axis has been capped to give a better representation of the rest of the data). With 25 workers, the tasks perform almost 25x faster. At 100 workers, it's almost 100x faster.
+As we can see from the results here:
+
+- for non-blocking and CPU-blocking jobs: multiple workers doesn't help the situation because of the GIL in MRI. In fact, it makes it worse due to the overhead incurred from context switching between threads.
+- for IO-blocking jobs: with one worker, it would've taken a very long time, 5034 seconds (the y-axis has been capped to give a better representation of the rest of the data). With 25 workers, the jobs perform about 25x faster. With 100 workers, it's about 100x faster.
 
 In the next section, we will take a look at how concurrency is implemented in Workerholic.
 
 #### Concurrency in Workerholic
 
-In the context of Workerholic, we introduced concurrency in order to improve performance by having our workers poll and perform the jobs from within a thread. This way, as shown earlier, if jobs are IO bound we can make use of concurrency in order to maximize the dequeuing and processing throughput and bring that enqueueing:processing ratio down.
+In the context of Workerholic, we introduced concurrency in order to improve performance by having our **workers poll and perform the jobs from within a thread**. This way, as shown earlier, if jobs are IO bound we can make use of concurrency in order to maximize the dequeuing and processing throughput and bring that enqueueing:processing ratio down to a 1:1 ratio.
 
+{: .center}
 ![efficiency_concurrency_workerholic](/img/efficiency_concurrency_workerholic.png){:width="700"}
 
 In Ruby, we pass a block to `Thread.new` in which we poll from from Redis and process the serialized job, if any:
@@ -314,23 +328,25 @@ In the next section we will look at how creating new Threads impacts the consump
 
 A Ruby process can spawn multiple threads. The memory model for a thread is as follows:
 
+{: .center}
 ![efficiency_concurrency_threads_memory](/img/efficiency_concurrency_threads_memory.png){:width="450"}
 
-Each thread has an independent stack and the heap is shared between the main thread and all child-threads.
+**Each thread has an independent stack and the heap is shared between the main thread and all child-threads.**
 
 For our email-sending job example above, we can spawn as many threads as we'd like to increase our processing throughput. But what happens to our memory footprint?
 
+{: .center}
 ![memory_usage_threads](/img/memory_usage_threads.png){:width="600"}
 
-As shown in the above bar chart, spawning 24 additional threads has a relativelty low impact on memory consumption. That is because threads are cheap, and most of the memory footprint comes from the heap, which is shared among all the 25 threads.
+As shown in the above bar chart, spawning 24 additional threads has a relatively **low impact on memory consumption**. That is because threads are cheap, and most of the memory footprint comes from the heap, which is shared among all the 25 threads.
 
-Now that we understand how threads can enable concurrency and help us solve the problem at hand, it is also important to understand how they can hurt us.
+Now that we understand how threads can enable concurrency and help us solve the problem at hand, it is also important to understand how they can be dangerous and unpredictable.
 
 #### Concurrency Issues & Thread-Safety
 
-While spawning more threads is cheap and significantly increases processing throughput, multi-threading introduces a new concern called **thread-safety**. When code is *thread-safe*, it means that the state of the resources behave correctly when multiple threads are using and modifying those resources.
+While spawning more threads is cheap and significantly increases processing throughput, multi-threading introduces a new concern called **thread-safety**. When code is *thread-safe*, it means the state of the resources behave correctly when multiple threads are using and modifying those resources.
 
-In MRI, core methods are thread-safe, so we don't need to worry about them. However, user-spaced code is not thread-safe, because it may introduce **race conditions**. Race conditions occur when two or more threads are competing to modify the same resource. This happens because the atomicity of the operation is not guaranteed and the OS scheduler can interrupt the execution of code at any time and schedule another thread. Let's take a look at the following example:
+In MRI, core methods are thread-safe, so we don't need to worry about them. However, user-spaced code might not thread-safe, because it may introduce **race conditions**. Race conditions occur when two or more threads are competing to modify the same resource. This happens because the atomicity of the operation is not guaranteed and the OS scheduler can interrupt the execution of code at any time and schedule another thread. Let's take a look at the following example:
 
 ```ruby
 $balance = 0
@@ -355,7 +371,7 @@ end.each(&:join)
 puts "Final balance: #{$balance}"
 ```
 
-Above we have a global variable `$balance` and a `PaymentJob` class with an instance method `perform` which mutates `$balance` by incrementing it by one, 1,000,000 times. Then we create 10 threads, and have each of those threads create a new instance of `PaymentJob` and calls `perform` on the instance. At the end, we should end up with 10,000,000. Let's run this program and see what we get:
+In the code snippet above, we have a global variable `$balance` and a `PaymentJob` class with an instance method `perform` which mutates `$balance` by incrementing it by one, 1,000,000 times. Then, we create 10 threads, and have each of those threads create a new instance of `PaymentJob` and call `perform` it. In the end, we should have a `$balance` of 10,000,000. Let's run this program and see what we get:
 
 ```
     $ ruby concurrency_issues_example.rb
@@ -367,11 +383,11 @@ Above we have a global variable `$balance` and a `PaymentJob` class with an inst
 
 ```
 
-As you can see here, that is definitely not the case. Why?
+As we can see here, that is definitely not the case. Why?
 
-Because the code above is not thread-safe. As mentioned earlier, when we have multiple threads trying to access and modify the same resource, `$balance` in this case, we have a race condition. A thread can enter the `perform` method which first sets `current_balance = $balance`, and then the OS scheduler can pause that thread and run another thread to do the same thing. So now you have two threads (and potentially more) starting its `current_balance` from 0 rather than a stacking multiple of 1,000,000. In the end, your final balance can be any multiple of 1,000,000 between 1,000,000 and 10,000,000. In other words, you cannot guarantee that the code will work as expected, and results may be different each time you run this program.
+Because the code above is **not thread-safe**. As mentioned earlier, when we have multiple threads trying to access and modify the same resource, `$balance` in this case, we have a **race condition**. A thread can enter the `perform` method which first sets `current_balance = $balance`, and then the OS scheduler can pause that thread and run another thread to do the same thing. So now we have two threads (and potentially more) starting with its `current_balance` at 0. In the end, your final balance can be any multiple of 1,000,000 between 1,000,000 and 10,000,000. In other words, **we cannot guarantee that the code will work as expected**, and results may be different each time we run this program.
 
-Let's look at another example in order to understand how tricky concurrenc issues can be:
+Let's look at another example in order to understand how tricky concurrency issues can be:
 
 ```ruby
 $balance = 0
@@ -408,11 +424,11 @@ The above example should produce the same result as the previous one. The differ
 
 ```
 
-As shown above it seems like everything works fine in this context. Why?
+As we can see above, it seems like everything works fine in this context. Why?
 
-Because the perform method is so cheap in terms of computational resources that the operation performed in it becomes atomic and thus doesn't introduce a concurrency issue. The problem with this example is that the atomicity of the operations executed in the `perform` method is absolutely not guaranteed and we cannot rely on the fact that it *should* work.
+Because the perform method is so cheap in terms of computational resources that the operation performed in it becomes atomic and, thus, doesn't introduce a concurrency issue. The problem with this example is that the atomicity of the operations executed in the `perform` method is absolutely not guaranteed and we cannot rely on the fact that it *should* work.
 
-These examples are used to demonstrate that in the context of Workerholic your jobs should be thread-safe. If you cannot guarantee that your jobs are thread-safe then you should only use 1 worker, so you only have one thread and spin up mutliple instances of workerholic if more processing throughput is needed. This will introduce parallelism, which is another way of maximizing the processing throughput.
+These examples are used to demonstrate that in the context of Workerholic, jobs should be thread-safe. If we cannot guarantee that our jobs are thread-safe then we should only use 1 worker. So, we would only have one thread and spin up mutliple instances of workerholic if more processing throughput was needed. This will introduce parallelism, which is another way of maximizing the processing throughput.
 
 ### Parallelism
 
@@ -423,20 +439,20 @@ Concurrency alone is good enough for IO-blocking jobs, but as you saw in a previ
 A common CPU-blocking job is image processing.
 
 - In the context of our scenario let's say an image processing job takes 4 seconds on average.
-- Recall from earlier, we said that we have a large Rails application with 1000 QPS and 1% of that is image processing, which means we have 864,000 image processing jobs per day
-- Multiply 864,000 by 4s and you have 960 hrs worth of processing lined up in a period of 24 hrs, giving us a 1:40 enqueue:processing ratio.
+- Recall from earlier, we said that we have a large Rails application with 1000 QPS and 1% of these queries involve some image processing, which means we have 864,000 image processing jobs per day
+- Multiply 864,000 by 4s and you have 960 hours worth of processing lined up in a period of 24 hrs, giving us a 1:40 enqueue:processing ratio.
 
 Similarly to the email example, this insight raises two issues:
 
-1. **Increased latency**: for every day that passes there are 39 more days of image processing that need to be performed. This means that any job enqueued after the first 24 hours won't be executed until the next 936 hours *(960 - 24)* have passed, since it is the time it would take to perform all the jobs that were enqueued before.
-2. **Quickly hitting storage limit**:
-  - In the context of Workerholic a job takes about 26 bytes on average.
-  - After 7 days, we'd have a backlog of `864,000 * 7 - (864,000 / 40) * 7 = 5.9` image processing jobs that still need to be processed.
-  - These jobs would need `5.9M * 26B = 146.2MB` of memory in order to be stored in Redis.
+1. **Increased latency**: every 24 hours, there are 864,000 image processing jobs that need to be performed. This would take 960 hours (40 days) to complete. Consequently, any job enqueued after the first 24 hours won't be executed until the next 936 hours *(960 - 24)* have passed, effectively increasing the latency by 936 hours per day.
+2. **Storage limit**:
+  - In the context of Workerholic a serialized job takes about 26 bytes of memory in Redis.
+  - Each day, we have a backlog of `864,000 - 864,000 / 40 = 842,400` image processing jobs that still need to be processed.
+  - These jobs would take `842,4000 * 26B = 20.88 MB` of memory in order to be stored in Redis. At this rate, our jobs storage space would be reaching the storage limit after 196 (4096 / 171.34) days.
 
-An additional backlog of 936 hours of image processing jobs everyday, along with an additional 146.2MB of memory occupied by this same backlog of image processing jobs every week make for a very inefficient background job system.
+With our current naive approach we have the **latency increasing at a rate of 936 hours per day**, along with the **jobs storage space increasing at a rate of 20.88 MB per day**. This would make for a very inefficient background job system.
 
-The challenge for us here is to even the enqueuing throughput and the dequeuing throughput. We should not slow down the enqueuing side or else our web application will become unresponsive, waiting for jobs to be enqueued before moving on, so let's focus on increasing the processing throughput.
+The challenge for us here is to balance out the enqueuing throughput and the dequeuing throughput. Let's focus on increasing the processing throughput.
 
 #### Parallelism & Processes
 
@@ -449,23 +465,26 @@ The CPU cores run in parallel, hence, if we have two CPU cores we can have compu
 
 Since we have 4 cores, we can spin up 4 processes and reduce the enqueuing:processing ratio from 1:40 to 1:10.
 
+{: .center}
 ![efficiency_parallelism_processes](/img/efficiency_parallelism_processes.png){:width="300"}
 
 We benchmarked how Workerholic performed when we ran 2 processes vs. 1 process:
 
+{: .center}
 ![benchmark_2_processes](/img/benchmark_2_processes.png)
 
-We can see that having more processes translates into increased performance. In each of these cases, time is divided by two. This is not a 100% guarantee, some factors need to be taken into account, such as:
+As we can see, having more processes translates into increased performance. In each of these cases, the processing time is divided by two. This is not a 100% guarantee, some factors need to be taken into account, such as:
 
 - other processes running and requiring some computational resources, effectively reducing the CPU time scheduled for our processes
 - relying on the OS scheduler for optimizing the sharing of computational resources, effectively introducing randomness from our point of view
 
-In the next section we will see how we introduced parallelism specifically for our BJP Workerholic.
+In the next section we will see how we introduced parallelism specifically for Workerholic.
 
 #### Parallelism in Workerholic
 
-The diagram below shows how Workerholic uses multiple processes if we had the CPU cores available to do so. The OS scheduler pushes / evicts processes from the CPU and each process has its own worker threads that can poll jobs from Redis and work on them. So if we have four CPU cores we can have computational resources allocated to four different processes potentially at the same time, effectively allowing them to run in parallel.
+The diagram below shows how Workerholic uses multiple processes if we had the CPU cores available to do so. The OS scheduler pushes / evicts processes from the CPU and **each process has its own worker threads** that can poll jobs from Redis and work on them. Consequently, if we have four CPU cores we can have computational resources allocated to four different processes potentially at the same time, effectively allowing them to run in parallel.
 
+{: .center}
 ![parallelism_workeholic_diagram](/img/parallelism_workeholic_diagram.png)
 
 Here is the code we wrote to make the above model possible:
@@ -498,7 +517,7 @@ module Workerholic
 end
 ```
 
-We fork processes if the user specified the option when starting Workerholic. Then we fork the number of processes specified minus one since the main process will serve as one of these processes, effectively having 1 parent process and N - 1 children processes. We make sure to store the processes ids `pid`, inside a `PIDS` constant for future reference. In each of these children processes we start the manager, which starts all the workers and the other components such as the Job Scheduler. Once these children processes are started we start the manager in the parent process.
+We fork processes if the user specified the option when starting Workerholic. Then we fork the number of processes specified minus one since the main process will serve as one of these processes, effectively having 1 parent process and N - 1 child processes. We make sure to store the processes ids `pid`, inside a `PIDS` constant for future reference. In each of these child processes we start the manager, which starts all the workers and the other components such as the Job Scheduler. Once these child processes are started we start the manager in the parent process.
 
 In the next section we will look at how forking child processes impacts memory usage.
 
@@ -506,20 +525,24 @@ In the next section we will look at how forking child processes impacts memory u
 
 A Ruby process can fork multiple child processes. The memory model for a process is as follows:
 
+{: .center}
 ![efficiency_processes_memory_design](/img/efficiency_processes_memory_design.png)
 
-Each process has its own address space, stack, and heap. When a process is forked, a child process is created with its own stack. As for the heap, depending on the OS the copy-on-write mechanism might be employed:
+**Each process has its own address space, stack, and heap**. When a process is forked, a child process is created with its own stack. As for the heap, depending on the OS the **copy-on-write mechanism** might be employed:
 
 - child processes start by referencing the parent's process heap, effectively sharing the same resources with the parent process
-- as modifications to the resources on the heap occur, children processes write the mutated resources to their own heap, leaving the parent's heap unmodified
+- as modifications to the resources on the heap occur, child processes write the mutated resources to their own heap, leaving the parent's heap unmodified
 
-We benchmarked the memory consumption of having one process and two processes by using a Rails application. Having one process takes up 125MB of memory, but having two processes don't take twice as much memory. This is the copy-on-write mechanism at work.
+We benchmarked the memory consumption of having one process and two processes by using a Rails application:
 
+{: .center}
 ![memory_usage_processes](/img/memory_usage_processes.png)
 
-Let's assume the Rails application in our scenario is a pretty big Rails app and takes about 400MB in memory. By forking 4 processes, Workerholic will at most take 1.6GB out of 4GB of RAM, meaning forking 4 processes is a viable option.
+Having one process takes up 125MB of memory, but having two processes doesn't take twice as much memory. This is the copy-on-write mechanism at work.
 
-As we mentioned previously, using our four CPU cores, we can fork a total of four processes and reduce our image processing enqueuing:processing ratio down to 1:10. But that is still not good enough. After an extended period of time, we will eventually end up with a backlog of jobs, effectively imposing a huge latency and memory footprint. What else can we do to even out or enqueuing:processing ratio?
+Let's assume the Rails application in our scenario is a pretty big Rails app and takes about 400MB of memory. By forking 4 processes, Workerholic will at most take 1.6GB out of 4GB of RAM, meaning forking 4 processes is a viable option.
+
+As we mentioned previously, by using our four CPU cores, we can fork a total of four processes and reduce our image processing enqueuing:processing ratio down to 1:10. But that is still not good enough. After an extended period of time, we will eventually end up with a backlog of jobs, effectively imposing a huge latency and memory footprint. What else can we do to balance out our enqueuing:processing ratio?
 
 ## Scalability
 
