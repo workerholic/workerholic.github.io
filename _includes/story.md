@@ -9,14 +9,14 @@ In the case of `awesome-website.com`, sending an email requires to send an HTTP 
 {: .center}
 ![Request-Response](/img/popular_features_example_1.png){:width="400"}
 
-650 ms could be considered a **slow response time**, but it is not unacceptable. What happens if the ESP sees its latency increase by a 5 seconds because of a network error or a an unexpected spike in traffic? The client would have to **wait 5.65 seconds** in order to receive a response. **How can we do better?** Does the user really need to receive a response a be able to interact with the rest of the website only once the email has been correctly sent? The answer is no, which means we could send the email asynchronously and, in the meantime, let the user interact with the website, maybe even send another HTTP request to view a different page. This is where a **Background Job Processor** comes in. Its sole purpose is to be delegated some jobs/work so it can be **performed asynchronously** and unburden the web server from **blocking work**.
+650 ms could be considered a **slow response time**, but it is not unacceptable. What happens if the ESP sees its latency increase by a 5 seconds because of a network error or a an unexpected spike in traffic? The client would have to **wait 5.65 seconds** in order to receive a response. **How can we do better?** Does the user really need to receive a response to be able to interact with the rest of the website only after the acknowledgment that the email has been successfully sent? The answer is no, which means we could send the email asynchronously and, in the meantime, let the user interact with the website. This is where a **Background Job Processor** comes in. Its sole purpose is to **asynchronously perform** work for the web server and release it from doing **blocking work**.
 
 {: .center}
 ![Example BJP](/img/popular_features_example_2.png){:width="500"}
 
 # Background Job Features Overview
 
-Before we get into how we built a Background Job Processor, let's take a quick run at the features a BJP needs to have, based on our research about other popular BJPs:
+Before we get into how we built a Background Job Processor, let's at an overview of the features a BJP should have, based on our research about other popular BJPs:
 
 **Core Features:**
 
@@ -76,7 +76,7 @@ This solves the problem of the main application's or BJP's unexpected shutdown/c
 
 ### Retrying Failed Jobs & Job Scheduler
 
-**Jobs can fail** for numerous reasons that may or may not be in the developer's control such as temporary network issues, timeouts, invalid job, etc. Regardless of the reason, the BJP needs to handle these errors. In case the error being raised is a momentary error, then it might be a good idea to retry the job.
+**Jobs can fail** for numerous reasons that may or may not be in the developer's control such as temporary network issues, timeouts, invalid job, etc. Regardless of the reason, the BJP needs to handle these errors. In case the error being raised is a momentary error, then it might be a good idea to retry the job later.
 
 {: .center}
 ![Retry Failed Jobs Diagram](/img/job_retry.png)
@@ -215,7 +215,7 @@ Suppose we have a significantly big Rails application with the following constra
 
 - 1000 average queries per second (QPS)
 - 10% of these queries involve sending email
-- 1% of these queries involve some image processing
+- 1% of these queries involve image processing
 
 Let's also assume we have a machine with the following specs:
 
@@ -247,7 +247,7 @@ This insight raises two issues:
 
 With our current naive approach we have the **latency increasing at a rate of 96 hours per day**, along with the **jobs storage space increasing at a rate of 171.34 MB per day**. This would make for a very inefficient background job system.
 
-The challenge for us here is to balance out the enqueuing throughput and the dequeuing throughput. Slowing down the enqueuing side is not a viable option because this web application would become unresponsive, waiting for jobs to be enqueued before moving on, so let's focus on increasing the processing throughput.
+The challenge for us here is to balance out the enqueuing throughput and the dequeuing throughput. Slowing down the enqueuing side is not a viable option because the web application would become unresponsive, waiting for jobs to be enqueued before moving on, so let's focus on increasing the processing throughput.
 
 #### Concurrency & Threads
 
@@ -255,11 +255,11 @@ Based on our scenario, we need to maximize the job processing throughput by a fa
 
 Currently, we have one worker processing the jobs one by one, sequentially. Our goal is to process these jobs 5 times as fast, hence, we need five workers instead of one, working together so they can process five jobs, instead of one, in 50 ms. This is where the concept of **Concurrency** comes in.
 
-Concurrency is employed to design atomic units of work than can be executed at the same time, concurrently. That is, for a given time window, two or more units of work are worked on. It could be at the exact same time (in parallel), or, alternatively but never at the exact same time (not in parallel). In our case, a unit of work is a job.
+Concurrency is employed to design atomic units of work that can be executed independently from one another, effectively enabling them to potentially be executed at the same time (in parallel or not). In our case, a unit of work is a job.
 
-In Ruby we can enable **Concurrency** by using **Threads**. A Ruby program *always* has a **main thread** of execution in which the code is executed. It is possible for this main thread to use the `Thread` API, provided by the Ruby core library, in order to spawn new threads of execution. A thread of execution executes independently from other threads of execution.
+In Ruby we can enable **Concurrency** by using **Threads**. A Ruby program *always* has a **main thread** of execution in which the code is executed. It is possible for this main thread to use the `Thread` API, provided by the Ruby core library, in order to spawn new threads of execution. A thread of execution runs independently from other threads.
 
-Threads rely on what is called the **OS scheduler** in order to receive some computational resources from a CPU core. This is how they are able to execute the code they contain. The OS Scheduler is in charge of fairly attributing some computational resources to each thread and process by **scheduling them on CPU cores** for a specific duration.
+In order to receive computational time on the CPU, threads rely on what is called the **OS scheduler**. This mechanism allows them to execute code they contain. The OS Scheduler is in charge of fairly allocating computational resources to each thread and process by **scheduling them on CPU cores** for a specific duration.
 
 {: .center}
 ![efficiency_OS_scheduler_threads](/img/efficiency_OS_scheduler_threads.png){:width="400"}
@@ -271,9 +271,9 @@ In **MRI** (Matz Ruby Interpreter, aka CRuby, the main Ruby implementation that 
 
 With this limitation it does not seem to make a difference to add threads. We will just be executing jobs concurrently but it will take the same amount of time. The OS scheduler will allocate the computational resources from a single CPU core between the Threads sequentially, by invoking Conext Switching, but not in parallel.
 
-Our jobs are **IO bound** because they require a trip over the wire: sending a request to the Email Service Provider API and receiving a response once the email has been sent. This trip over the wire takes 50 ms on average. **Having an IO bound job executing inside a thread means that this thread will be put in a sleeping state** for 50ms. During this time the OS scheduler can schedule the 4 other threads to a CPU core which will also be put in a sleeping state for 50 ms during the trip over the wire. This way we will have 5 workers sleeping at the same time and all waiting on IO to keep executing. Once a worker receives a response it will keep executing once the OS scheduler schedules it again on a CPU core.
+Our jobs are **IO bound** because they require a trip over the wire: sending a request to the Email Service Provider API and receiving a response once the email has been sent. This trip over the wire takes 50 ms on average. **Having an IO bound job executing inside a thread means that this thread will be put in a sleeping state** for 50ms. During this time the OS scheduler can schedule any of the 4 other threads to a CPU core which will also be put in a sleeping state for 50 ms during the trip over the wire. This way we will have 5 workers sleeping at the same time and all waiting on IO to keep executing. Once a worker receives a response it will keep executing once the OS scheduler schedules it again on a CPU core.
 
-The point here is that we cannot have threads running in parallel, but if the job being executed inside a thread has to wait on IO for 99.99% of the total execution job time then **multiple threads can spend almost all of this time waiting simultaneously, in parallel**, instead of having a single thread having to wait on all jobs sequentially.
+The point here is that we cannot have threads running in parallel, but if the job being executed inside a thread has to wait on IO for 99.99% of the total execution job time then **multiple threads can spend almost all of this time waiting simultaneously, in parallel**, instead of having a single thread waiting on all jobs sequentially.
 
 After implementing Concurrency by using multiple workers in Workerholic we decided to benchmark, using MRI, the effect of having multiple workers working on different types of jobs:
 
@@ -286,7 +286,7 @@ After implementing Concurrency by using multiple workers in Workerholic we decid
 
 As we can see from the results here:
 
-- for non-blocking and CPU-blocking jobs: multiple workers doesn't help the situation because of the GIL in MRI. In fact, it makes it worse due to the overhead incurred from context switching between threads.
+- for non-blocking and CPU-blocking jobs: having multiple workers doesn't help the situation because of the GIL in MRI. In fact, it makes it worse due to the overhead incurred from context switching between threads.
 - for IO-blocking jobs: with one worker, it would've taken a very long time, 5034 seconds (the y-axis has been capped to give a better representation of the rest of the data). With 25 workers, the jobs perform about 25x faster. With 100 workers, it's about 100x faster.
 
 In the next section, we will take a look at how concurrency is implemented in Workerholic.
@@ -331,7 +331,7 @@ A Ruby process can spawn multiple threads. The memory model for a thread is as f
 {: .center}
 ![efficiency_concurrency_threads_memory](/img/efficiency_concurrency_threads_memory.png){:width="450"}
 
-**Each thread has an independent stack and the heap is shared between the main thread and all child-threads.**
+**Each thread has an independent stack and the heap is shared between the main thread and all child threads.**
 
 For our email-sending job example above, we can spawn as many threads as we'd like to increase our processing throughput. But what happens to our memory footprint?
 
@@ -346,7 +346,7 @@ Now that we understand how threads can enable concurrency and help us solve the 
 
 While spawning more threads is cheap and significantly increases processing throughput, multi-threading introduces a new concern called **thread-safety**. When code is *thread-safe*, it means the state of the resources behave correctly when multiple threads are using and modifying those resources.
 
-In MRI, core methods are thread-safe, so we don't need to worry about them. However, user-spaced code might not thread-safe, because it may introduce **race conditions**. Race conditions occur when two or more threads are competing to modify the same resource. This happens because the atomicity of the operation is not guaranteed and the OS scheduler can interrupt the execution of code at any time and schedule another thread. Let's take a look at the following example:
+In MRI, core methods are thread-safe, so we don't need to worry about them. However, user-spaced code might not thread-safe and may introduce what is known as **race conditions**. Race conditions occur when two or more threads are competing to modify the same resource. This happens because the atomicity of the operation is not guaranteed and the OS scheduler can interrupt the execution of code at any time and schedule another thread. Let's take a look at the following example:
 
 ```ruby
 $balance = 0
@@ -371,7 +371,7 @@ end.each(&:join)
 puts "Final balance: #{$balance}"
 ```
 
-In the code snippet above, we have a global variable `$balance` and a `PaymentJob` class with an instance method `perform` which mutates `$balance` by incrementing it by one, 1,000,000 times. Then, we create 10 threads, and have each of those threads create a new instance of `PaymentJob` and call `perform` it. In the end, we should have a `$balance` of 10,000,000. Let's run this program and see what we get:
+In the code snippet above, we have a global variable `$balance` and a `PaymentJob` class with an instance method `perform` which mutates `$balance` by incrementing it by one, 1,000,000 times. We then create 10 threads, and have each thread create a new instance of `PaymentJob` and call `perform` on it. In the end, we should have a `$balance` of 10,000,000. Let's run this program and see what we get:
 
 ```
     $ ruby concurrency_issues_example.rb
@@ -428,7 +428,7 @@ As we can see above, it seems like everything works fine in this context. Why?
 
 Because the perform method is so cheap in terms of computational resources that the operation performed in it becomes atomic and, thus, doesn't introduce a concurrency issue. The problem with this example is that the atomicity of the operations executed in the `perform` method is absolutely not guaranteed and we cannot rely on the fact that it *should* work.
 
-These examples are used to demonstrate that in the context of Workerholic, jobs should be thread-safe. If we cannot guarantee that our jobs are thread-safe then we should only use 1 worker. So, we would only have one thread and spin up mutliple instances of workerholic if more processing throughput was needed. This will introduce parallelism, which is another way of maximizing the processing throughput.
+These examples are used to demonstrate that in the context of Workerholic, jobs should be thread-safe. If we cannot guarantee that our jobs are thread-safe then we should only use 1 worker. So, we would only have one thread and spin up multiple instances of workerholic if more processing throughput was needed. This will introduce parallelism, which is another way of maximizing the processing throughput.
 
 ### Parallelism
 
@@ -439,7 +439,7 @@ Concurrency alone is good enough for IO-blocking jobs, but as you saw in a previ
 A common CPU-blocking job is image processing.
 
 - In the context of our scenario let's say an image processing job takes 4 seconds on average.
-- Recall from earlier, we said that we have a large Rails application with 1000 QPS and 1% of these queries involve some image processing, which means we have 864,000 image processing jobs per day
+- As we mentioned earlier, we have a large Rails application with 1000 QPS and 1% of these queries involve image processing, which means we have 864,000 image processing jobs per day
 - Multiply 864,000 by 4s and you have 960 hours worth of processing lined up in a period of 24 hrs, giving us a 1:40 enqueue:processing ratio.
 
 Similarly to the email example, this insight raises two issues:

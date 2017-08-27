@@ -6,7 +6,7 @@ use-site-title: true
 ---
 
 This is the story of how three Software Engineers decided to shed some light on Background Job Processors by building one from scratch.
-We started by acquiring a deeper understanding about the use for a Background Job Processor (BJP), then, we identified the most popular ones in the Ruby-ecosystem and, finally, we built one from scratch.
+We started by developing a deeper understanding about the use for a Background Job Processor (BJP), then we identified the most popular ones in the Ruby-ecosystem and, finally, we built one from scratch.
 
 In this story we will walk you through the process of how we managed to build a BJP from scratch, **Workerholic**, that compares to Sidekiq in terms of performance.
 
