@@ -1056,10 +1056,10 @@ module Workerholic
     # ...
 
     def self.load_app
-      if File.exist?('./config/environment.rb')
-        load_rails
-      elsif options[:require]
+      if options[:require]
         load_specified_file
+      elsif File.exist?('./config/environment.rb')
+        load_rails
       else
         display_app_load_info
       end
