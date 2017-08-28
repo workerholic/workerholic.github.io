@@ -16,7 +16,7 @@ But first, let us introduce ourselves:
 
 **We are looking for our next opportunity**, so don't hesitate to **click us to get in touch**!
 
-Here is a quick demo of **Workerholic in action**:
+Here is a quick demo of Workerholic in action:
 
 ![demo_workerholic](/img/demo_workerholic_0.gif){:id="demo"}
 

@@ -1,18 +1,18 @@
 
 # Introduction
 
-We started by acquiring a deeper understanding about **why** would one use a **Background Job Processor** (BJP)?
+We started by acquiring a deeper understanding about why would one use a Background Job Processor (BJP).
 
-To this effect we decided to illustrate the basic use of a BJP with an **example**:  a user, identified as the `Client`, wants to register on a web site `awesome-website.com`. When users register on `awesome-website.com` they receive an email in order for them to verify their email address. What does this mean on the `Web Server` side?<br>
-In the case of `awesome-website.com`, sending an email requires to send an HTTP request to an Email Service Provider (ESP) and **wait for a response**, depending on the latency of the ESP and the geographical distance between the `Web Server` and the ESP's server this could take from 2ms to 500ms or more. Let's assume the worst and consider each trip over the wire to the ESP takes 500ms. This means that if the Web Server's usual response time for this kind of HTTP request is 150ms then it will take 650ms total to send a response back to the client.
-
-{: .center}
-![Request-Response](/img/popular_features_example_1.png){:width="400"}
-
-650 ms could be considered a **slow response time**, but it is not unacceptable. What happens if the ESP sees its latency increase by a 5 seconds because of a network error or a an unexpected spike in traffic? The client would have to **wait 5.65 seconds** in order to receive a response. **How can we do better?** Does the user really need to receive a response to be able to interact with the rest of the website only after the acknowledgment that the email has been successfully sent? The answer is no, which means we could send the email asynchronously and, in the meantime, let the user interact with the website. This is where a **Background Job Processor** comes in. Its sole purpose is to **asynchronously perform** work for the web server and release it from doing **blocking work**.
+To this end we decided to illustrate the basic use of a BJP with an example: a user, identified as the Client, wants to register on a web site awesome-website.com. When users register on awesome-website.com they receive an email in order for them to verify their email address. What does this mean on the Web Server side?<br>
+In the case of awesome-website.com, sending an email requires to send an HTTP request to an Email Service Provider (ESP) and **wait for a response**, depending on the latency of the ESP and the geographical distance between the Web Server and the ESP's server this could take from 2ms to 500ms or more. Let's assume the worst and consider each trip over the wire to the ESP takes 500ms. This means that if the Web Server's usual response time for this kind of HTTP request is 150ms then it will take 650ms total to send a response back to the client.
 
 {: .center}
-![Example BJP](/img/popular_features_example_2.png){:width="500"}
+![Request-Response](/img/popular_features_example_1.png){:width="600"}
+
+650 ms could be considered a slow response time, but it is not unacceptable. What happens if the ESP sees its latency increase by a 5 seconds because of a network error or a an unexpected spike in traffic? The client would have to wait 5.65 seconds in order to receive a response. How can we do better? Does the user really need to receive a response to be able to interact with the rest of the website only after the acknowledgment that the email has been successfully sent? The answer is no, which means we could send the email asynchronously and, in the meantime, let the user interact with the website. This is where a **Background Job Processor** comes in. Its sole purpose is to **asynchronously perform work** for the web server and release it from doing blocking work.
+
+{: .center}
+![Example BJP](/img/popular_features_example_2.png){:width="600"}
 
 # Background Job Features Overview
 
@@ -975,7 +975,7 @@ Next, we made a few estimations:
 
 We make an assumption that there would be 25 different job classes, and from there if we took one data point a day, that would give us 9000 fields which translates to 0.1MB. One data point per hour would give us 219,000 fields which translates to 1.7MB. And one data point per minute would give us 13M fields which translates to 100MB.
 
-To be able to transfer data over the wire quickly when a user requests 365 days of data, we realized that one data point per day is the only viable option 
+To be able to transfer data over the wire quickly when a user requests 365 days of data, we realized that one data point per day is the only viable option
 
 In the next section we will start exploring additional features that can be added to a BJP and that we actually implemented for Workerholic.
 
@@ -1056,10 +1056,10 @@ module Workerholic
     # ...
 
     def self.load_app
-      if File.exist?('./config/environment.rb')
-        load_rails
-      elsif options[:require]
+      if options[:require]
         load_specified_file
+      elsif File.exist?('./config/environment.rb')
+        load_rails
       else
         display_app_load_info
       end
