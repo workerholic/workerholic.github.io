@@ -16,7 +16,7 @@ In the case of awesome-website.com, sending an email requires to send an HTTP re
 
 # Background Job Features Overview
 
-Before we get into how we built a Background Job Processor, let's at an overview of the features a BJP should have, based on our research about other popular BJPs:
+Before we get into how we built a Background Job Processor, let's look at an overview of the features a BJP should have:
 
 **Core Features:**
 
@@ -43,11 +43,16 @@ Above is a diagram of the overall architecture of our BJP, Workerholic.
 - On the right, Workerholic workers poll from the job queues and, if there are any jobs to be done, process the jobs using the `Job Processor` component of Workerholic.
 - Regardless of whether the job is completed successfully or not, we store the job back in Redis inside a data structure serving as `Stats` storage. We will then use this statistical information to display background jobs related metrics on our web UI.
 - If a job failed, we use the `Job Retry` component along with the `Job Scheduler` component in order to attempt to retry a job sometime in the future. To do so, a future timestamp is placed on the job, it is then stored into Redis inside a `Scheduled Jobs` sorted set (a Redis data structure that we will expand on later in this post).
-- The `Job Scheduler` will peek the sorted set and compare timestamps to see if there is a job due. If that's the case, the job will be enqueued into a Job Queue and the cycle continues.
+- The `Job Scheduler` will check the first element in the sorted set and compare timestamps to see if there is a job due. If that's the case, the job will be enqueued into a Job Queue and the cycle continues.
 
 # Building Workerholic
 
-The idea behind this project was to build a BJP from scratch and sharing our findings, what we learned and the challenges we faced with the community. Next, we will dive into each feature that we deemed belonged to a BJP and how they are implemented in Workerholic.
+The idea behind this project was to build a BJP from scratch and share the following with the community:
+
+- our findings
+- the decisions we made and why
+- the challenges we faced
+- what we learned
 
 ## Reliability
 
@@ -57,8 +62,7 @@ How can we make our BJP **reliable**?
 
 ### Jobs Persistence
 
-As mentioned above, a question that needs to be answered is: how can we make sure our jobs don't get lost if the BJP or the main application crashes?
-To solve this problem we introduced a **data store**. This data store is used to **persist the serialized jobs** that have been enqueued by the main application.
+To solve this problem we introduced a **data store**. This data store is used to persist the serialized jobs that have been enqueued by the main application.
 
 For Workerholic, we decided to use Redis thanks to the following features:
 
@@ -70,7 +74,7 @@ For Workerholic, we decided to use Redis thanks to the following features:
 {: .center}
 ![Jobs Persistence Diagram](/img/jobs_persistence_redis.png)
 
-By relying on Redis and its robustness we made Workerholic reliable. Redis helps solve the problem of when either the web application or BJP itself crashes, the jobs stored in Redis will be persisted. Redis automatically takes database snapshots, which means in case it crashes, we will also have the jobs persisted to disk.
+By relying on Redis and its robustness we managed to make Workerholic more reliable. Redis helps solve the problem of when either the web application or BJP itself crashes, the jobs stored in Redis will be persisted. Redis automatically takes database snapshots, which means in case it crashes, we will also have the jobs persisted to disk.
 
 This solves the problem of the main application's or BJP's unexpected shutdown/crash. What should be done if the jobs themselves crash/raise an exception?
 
@@ -86,10 +90,11 @@ Workerholic will attempt to retry intermittently failing jobs. We implemented th
 ```ruby
 module Workerholic
   class JobRetry
+    MAX_RETRY_ATTEMPTS = 5
     # ...
 
     def retry
-      return if job.retry_count >= 5
+      return if job.retry_count >= MAX_RETRY_ATTEMPTS
 
       increment_retry_count
       schedule_job_for_retry
@@ -103,7 +108,7 @@ module Workerholic
 end
 ```
 
-Jobs are wrapped with Ruby objects which have an attribute called `retry_count`. As the name suggests, it is used to keep track of how many times a job has been retried. A job will be retried up to five times. At that point, it's more likely that there's a problem with the job itself rather than something being wrong with an external component. In which case, Workerholic will log that the job has failed and store statistics data into Redis so that Workerholic's users can figure out what went wrong.
+Jobs are wrapped with Ruby objects which have an attribute called `retry_count`. As the name suggests, it is used to keep track of how many times a job has been retried. A job will be retried up to five times. At that point, it's more likely that there's a problem with the job itself rather than something being wrong with an external component, in which case, Workerholic will log that the job has failed and store statistics data into Redis so that Workerholic's users can figure out what went wrong.
 
 The code snippet above also shows that `JobRetry` enlists the help of `JobScheduler` to schedule a time for a failed job to be executed at, effectively turning it into a scheduled job. Here is how `JobScheduler` schedules jobs and enqueues jobs ready to be executed:
 
@@ -269,7 +274,7 @@ In **MRI** (Matz Ruby Interpreter, aka CRuby, the main Ruby implementation that 
 {: .center}
 ![efficiency_mri_gil](/img/efficiency_mri_gil.png){:width="450" height="200"}
 
-With this limitation it does not seem to make a difference to add threads. We will just be executing jobs concurrently but it will take the same amount of time. The OS scheduler will allocate the computational resources from a single CPU core between the Threads sequentially, by invoking Conext Switching, but not in parallel.
+With this limitation it does not seem to make a difference to add threads. We will just be executing jobs concurrently but it will take the same amount of time. The OS scheduler will allocate the computational resources from a single CPU core between the Threads sequentially, by invoking Context Switching, but not in parallel.
 
 Our jobs are **IO bound** because they require a trip over the wire: sending a request to the Email Service Provider API and receiving a response once the email has been sent. This trip over the wire takes 50 ms on average. **Having an IO bound job executing inside a thread means that this thread will be put in a sleeping state** for 50ms. During this time the OS scheduler can schedule any of the 4 other threads to a CPU core which will also be put in a sleeping state for 50 ms during the trip over the wire. This way we will have 5 workers sleeping at the same time and all waiting on IO to keep executing. Once a worker receives a response it will keep executing once the OS scheduler schedules it again on a CPU core.
 
@@ -426,13 +431,13 @@ The above example should produce the same result as the previous one. The differ
 
 As we can see above, it seems like everything works fine in this context. Why?
 
-Because the perform method is so cheap in terms of computational resources that the operation performed in it becomes atomic and, thus, doesn't introduce a concurrency issue. The problem with this example is that the atomicity of the operations executed in the `perform` method is absolutely not guaranteed and we cannot rely on the fact that it *should* work.
+Because the perform method is so cheap in terms of computational resources that the operation performed in it becomes atomic and, thus, doesn't introduce a race condition. The problem with this example is that the atomicity of the operations executed in the `perform` method is absolutely not guaranteed and we cannot rely on the fact that it *should* work.
 
-These examples are used to demonstrate that in the context of Workerholic, jobs should be thread-safe. If we cannot guarantee that our jobs are thread-safe then we should only use 1 worker. So, we would only have one thread and spin up multiple instances of workerholic if more processing throughput was needed. This will introduce parallelism, which is another way of maximizing the processing throughput.
+These examples are used to demonstrate that in the context of Workerholic, jobs should be thread-safe. If we cannot guarantee that our jobs are thread-safe then we should only use 1 worker. So, we would only have one thread and spin up multiple instances of Workerholic if more processing throughput was needed. This will introduce parallelism, which is another way of maximizing the processing throughput.
 
 ### Parallelism
 
-Concurrency alone is good enough for IO-blocking jobs, but as you saw in a previous chart, it does nothing for CPU bound blocking jobs. Why? And what can we do to maximize processing throughput for CPU bound jobs?
+Concurrency alone is good enough for IO-blocking jobs, but as you saw in a previous chart, it does nothing for CPU bound jobs. Why? And what can we do to maximize processing throughput for CPU bound jobs?
 
 #### Image Processing Jobs Calculations
 
@@ -1178,22 +1183,21 @@ We also decided to benchmark JRuby against MRI. Because JRuby can run in paralle
 
 It was a lot of fun to work on this project! Our goal was to share this knowledge with the community and we are confident our experience will be useful to other software engineers even if they don't have a plan to build their own background job processor. After all, it's usually a very interesting enterprise to understand how something works under the hood!
 
-As for us, we learned and expanded our knowledge about:
+As a way to summarize, here are the main decisions that we made while building this project:
 
-- concurrency in general and threads in particular
-- parallel execution using multiple processes
-- low level constructs such as threads and processes and their memory footprint
-- the impact on computational and memory resources when using multiple threads and multiple processes
+- supporting concurrency by using threads
+- supporting parallel execution by using multiple processes
+- considering low level constructs such as threads and processes and their memory footprint
+- evaluating the impact on computational and memory resources when using multiple threads and multiple processes
 - using Redis as a key/value store and taking advantage of its awesome features such as native data structures, great performance and database snapshots
 - building a Ruby gem
 - providing users with an easy-to-use yet powerful CLI
-- working with other Ruby interpreters
+- working with JRuby
 
 Since Workerholic is still in alpha, we do not recommend using it in a production environment. As for the next steps, we have quite a few in mind:
 
 - Automatically restart main Workerholic process in the event of failure (to improve reliability in case of emergency)
-- Establish more reliable and reactive jobs persistence methods (to lose even less jobs than we do at this moment if Redis crashes)
+- Establish more reliable and reactive jobs persistence methods (to lose even less jobs than we do at this moment if Redis crashes or if Workerholic crashes)
 - Identify other potential use-cases for Workerholic and adapt our codebase accordingly
 
 We hope you enjoyed reading about our journey as much as we enjoyed the journey itself!
-
