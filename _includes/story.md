@@ -1172,9 +1172,9 @@ Finally, we wanted to compare Workerholic with Sidekiq one last time with differ
 
 As an additional feature, we wanted to make sure Workerholic runs on various Ruby interpeters and that's why we chose JRuby (one of the most stable and mature Ruby interpreters) to be the main alternative interpreter. To ensure full compatibility, we ran an extensive set of jobs on our Rails application.
 
-We also decided to benchmark JRuby against MRI. Because JRuby can run in parallel without the need of spinning up multiple processes, we found that execution of CPU blocking jobs was much faster in JRuby than in MRI, which is what we would expect.
-
 ### JRuby
+
+We also decided to benchmark JRuby against MRI. Because JRuby can run multiple threads in parallel without the need of spinning up multiple processes, we found that execution of CPU blocking jobs was much faster in JRuby than in MRI using a single process, which is what we would expect.
 
 {: .center}
 ![benchmark_jruby](/img/benchmark_jruby.png)
