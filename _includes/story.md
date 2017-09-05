@@ -453,7 +453,7 @@ Similarly to the email example, this insight raises two issues:
 2. **Storage limit**:
   - In the context of Workerholic a serialized job takes about 26 bytes of memory in Redis.
   - Each day, we have a backlog of `864,000 - 864,000 / 40 = 842,400` image processing jobs that still need to be processed.
-  - These jobs would take `842,4000 * 26B = 20.88 MB` of memory in order to be stored in Redis. At this rate, our jobs storage space would be reaching the storage limit after 196 (4096 / 171.34) days.
+  - These jobs would take `842,4000 * 26B = 20.88 MB` of memory in order to be stored in Redis. At this rate, our jobs storage space would be reaching the storage limit after 196 (4096 / 20.88) days.
 
 With our current naive approach we have the **latency increasing at a rate of 936 hours per day**, along with the **jobs storage space increasing at a rate of 20.88 MB per day**. This would make for a very inefficient background job system.
 
